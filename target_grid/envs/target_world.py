@@ -1,14 +1,13 @@
 from enum import Enum
 import gymnasium as gym
 from gymnasium import spaces
-import pygame
 import numpy as np
 
 
 from graphs import GridGraph
 from objects import Wall, Goal, Target, Agent
 from window import Colours, Window, SCREEN_HEIGHT, SCREEN_WIDTH
-from polycheck import visibility_from_real_region, visibility_from_region
+from polycheck import visibility_from_real_region  # , visibility_from_region
 
 
 class Actions(Enum):
@@ -22,19 +21,22 @@ class Actions(Enum):
     north_west = 7
     action_space_size = 8
 
-action_to_direction = {
-            Actions.north.value: np.array([1, 0]),
-            Actions.north_east.value: np.array([1, 1]),
-            Actions.east.value: np.array([0, 1]),
-            Actions.south_east.value: np.array([-1, 1]),
-            Actions.south.value: np.array([-1, 0]),
-            Actions.south_west.value: np.array([-1, -1]),
-            Actions.west.value: np.array([0, -1]),
-            Actions.north_west.value: np.array([1, -1]),
-        }
 
-def action_to_node( node, action ):
+action_to_direction = {
+    Actions.north.value: np.array([1, 0]),
+    Actions.north_east.value: np.array([1, 1]),
+    Actions.east.value: np.array([0, 1]),
+    Actions.south_east.value: np.array([-1, 1]),
+    Actions.south.value: np.array([-1, 0]),
+    Actions.south_west.value: np.array([-1, -1]),
+    Actions.west.value: np.array([0, -1]),
+    Actions.north_west.value: np.array([1, -1]),
+}
+
+
+def action_to_node(node, action):
     return tuple(np.add(node, action_to_direction[action]))
+
 
 class GridState(Enum):
     empty = 0
@@ -45,8 +47,6 @@ class GridState(Enum):
     collision = 80
     wall = 100
     max_value = 100
-
-
 
 
 class TargetWorldEnv(gym.Env):
@@ -76,13 +76,15 @@ class TargetWorldEnv(gym.Env):
         self.goal_pos = goal_pos
         self.grid_data = grid_data
 
-        # observations are a dictionary with keys for agent and target locations, as well
-        # as a grid showing the visible portion of the world
+        # observations are a dictionary with keys for agent and target locations,
+        # as well as a grid showing the visible portion of the world
         self.observation_space = spaces.Dict(
             {
                 "agent": spaces.Box(low=0, high=self.size - 1, shape=(2,), dtype=int),
                 "target": spaces.Box(low=0, high=self.size - 1, shape=(2,), dtype=int),
-                "grid": spaces.Box(low=0, high=1, shape=(self.size, self.size), dtype=int),
+                "grid": spaces.Box(
+                    low=0, high=1, shape=(self.size, self.size), dtype=int
+                ),
             }
         )
         # BUGBUG - add the distance to the goal as a wrapper
@@ -113,7 +115,8 @@ class TargetWorldEnv(gym.Env):
         grid (numpy.ndarray): A 2D array representing the grid.
 
         Returns:
-        numpy.ndarray: A 2D array representing the visibility of each point from the first point.
+        numpy.ndarray: A 2D array representing the visibility of each point
+        from the first point.
 
         """
         visibility = self.visibility_cache.get(x)
@@ -134,10 +137,15 @@ class TargetWorldEnv(gym.Env):
                 + 0.5
             )
             visibility = visibility_from_real_region(
-                data=self.grid_data, origin=(0, 0), resolution=1.0, starts=start, ends=ends
+                data=self.grid_data,
+                origin=(0, 0),
+                resolution=1.0,
+                starts=start,
+                ends=ends,
             ).reshape(height, width)
             # Bresenham's line algorithm (integer based)
-            # visibility = visibility_from_region(data=self.grid_data, starts=start, ends=ends).reshape(height, width)
+            # visibility = visibility_from_region(data=self.grid_data, starts=start,
+            #                                     ends=ends).reshape(height, width)
         self.visibility_cache[x] = visibility
         return visibility
 
@@ -148,7 +156,11 @@ class TargetWorldEnv(gym.Env):
             y = self.rng.integers(0, self.size, dtype=int)
             if self.grid_data[y, x] == 0 and self.goal_pos != (x, y):
                 break
-        return Agent(node=(x, y), orientation=self.rng.integers(0, Actions.action_space_size.value), colour=Colours.blue)
+        return Agent(
+            node=(x, y),
+            orientation=self.rng.integers(0, Actions.action_space_size.value),
+            colour=Colours.blue,
+        )
 
     def _get_obs(self):
         # base grid has the following values
@@ -169,11 +181,17 @@ class TargetWorldEnv(gym.Env):
         #   target facing east (along x-axis)
         #   agent facing east
         for target in self.targets:
-            obs_data[1, target.node[1], target.node[0]] = GridState.target.value + target.orientation
+            obs_data[1, target.node[1], target.node[0]] = (
+                GridState.target.value + target.orientation
+            )
         if obs_data[1, self.agent.node[1], self.agent.node[0]] != 0:
-            obs_data[1, self.agent.node[1], self.agent.node[0]] = GridState.collision.value
+            obs_data[
+                1, self.agent.node[1], self.agent.node[0]
+            ] = GridState.collision.value
         else:
-            obs_data[1, self.agent.node[1], self.agent.node[0]] = GridState.agent.value + self.agent.orientation
+            obs_data[1, self.agent.node[1], self.agent.node[0]] = (
+                GridState.agent.value + self.agent.orientation
+            )
         obs_data[1, :, :] /= GridState.max_value.value
 
         # third grid has the distance to the goal
@@ -194,14 +212,17 @@ class TargetWorldEnv(gym.Env):
             self.grid_data = np.zeros((self.size, self.size), dtype=int)
             for i in range(self.size):
                 while True:
-                    x,y = self.rng.integers(0, self.size, size=2)
+                    x, y = self.rng.integers(0, self.size, size=2)
                     if self.grid_data[y, x] == 0:
                         break
                 self.grid_data[y, x] = 1
 
-        self.graph = GridGraph(edge_probability=1.0, grid_data=self.grid_data, seed=seed)
+        self.graph = GridGraph(
+            edge_probability=1.0, grid_data=self.grid_data, seed=seed
+        )
 
-        # Place the obstacles in the grid by getting the indices of the obstacles in the numpy array
+        # Place the obstacles in the grid by getting the indices of the obstacles in the
+        # numpy array
         obs = list(zip(*self.grid_data.nonzero()))
         for y, x in obs:
             wall = Wall(node=(x, y), colour=Colours.grey)
@@ -209,7 +230,11 @@ class TargetWorldEnv(gym.Env):
 
         # Place the agent
         if self.agent_start_pos is not None:
-            agent = Agent(node=self.agent_start_pos, orientation=self.agent_start_dir, colour=Colours.blue)
+            agent = Agent(
+                node=self.agent_start_pos,
+                orientation=self.agent_start_dir,
+                colour=Colours.blue,
+            )
             self.agent = agent
         else:
             self.agent = self.place_agent()
@@ -241,9 +266,20 @@ class TargetWorldEnv(gym.Env):
         # coincide with the agent's location, or any of the walls, or the goal
         while True:
             x, y = self.rng.integers(0, self.size, size=2, dtype=int)
-            if self.grid_data[y, x] == 0 and (x, y) != self.agent.node and (x, y) != self.goal.node:
+            if (
+                self.grid_data[y, x] == 0
+                and (x, y) != self.agent.node
+                and (x, y) != self.goal.node
+            ):
                 break
-        target = Target(node=(x, y), colour=Colours.red, action_space_size=Actions.action_space_size.value, rng=self.rng, action_to_node=action_to_node, graph=self.graph)
+        target = Target(
+            node=(x, y),
+            colour=Colours.red,
+            action_space_size=Actions.action_space_size.value,
+            rng=self.rng,
+            action_to_node=action_to_node,
+            graph=self.graph,
+        )
         self.targets = [target]
 
         observation = self._get_obs()
@@ -298,7 +334,13 @@ class TargetWorldEnv(gym.Env):
             Window.initialize_screen()
 
         if self.window is None:
-            self.window = Window(screen_width=SCREEN_WIDTH, screen_height=SCREEN_HEIGHT, margin=10, display_size=self.size, frame_rate=self.metadata["render_fps"])
+            self.window = Window(
+                screen_width=SCREEN_WIDTH,
+                screen_height=SCREEN_HEIGHT,
+                margin=10,
+                display_size=self.size,
+                frame_rate=self.metadata["render_fps"],
+            )
 
         self.window.clear()
         self.graph.draw(self.window, self.current_visibility)
@@ -307,7 +349,9 @@ class TargetWorldEnv(gym.Env):
             obj.draw(self.window, self.current_visibility[obj.node[1], obj.node[0]])
 
         for target in self.targets:
-            target.draw(self.window, self.current_visibility[target.node[1], target.node[0]])
+            target.draw(
+                self.window, self.current_visibility[target.node[1], target.node[0]]
+            )
         self.agent.draw(self.window)
 
         if self.render_mode == "human":

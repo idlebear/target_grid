@@ -1,12 +1,6 @@
-from copy import deepcopy
-from importlib import import_module
-from math import sqrt, exp
-import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
 import pygame
-from random import random, expovariate, seed
-
+from math import sqrt
 from util import DotDict
 
 SCREEN_WIDTH = 1000
@@ -53,7 +47,15 @@ def get_location(origin, location):
 
 
 class Window:
-    def __init__(self, screen_width, screen_height, margin, display_origin=(0, 0), display_size=10.0, frame_rate=4):
+    def __init__(
+        self,
+        screen_width,
+        screen_height,
+        margin,
+        display_origin=(0, 0),
+        display_size=10.0,
+        frame_rate=4,
+    ):
 
         self.sim_time_text = pygame.font.SysFont("dejavuserif", 15)
         self.elapsed_time_text = pygame.font.SysFont("dejavuserif", 10)
@@ -69,8 +71,12 @@ class Window:
         self.border_offset = 10
         self.origin = display_origin
 
-        self.screen = pygame.Surface((self.screen_width, self.screen_height), flags=pygame.SRCALPHA)
-        self.tmp_screen = pygame.Surface((self.screen_width, self.screen_height), flags=pygame.SRCALPHA)
+        self.screen = pygame.Surface(
+            (self.screen_width, self.screen_height), flags=pygame.SRCALPHA
+        )
+        self.tmp_screen = pygame.Surface(
+            (self.screen_width, self.screen_height), flags=pygame.SRCALPHA
+        )
         self.display_screen = None
         self.clock = None
         self.frame_rate = frame_rate
@@ -104,7 +110,9 @@ class Window:
         ex = self.xmargin + int((end[0] - self.origin[0]) * self.scale)
         ey = self.ymargin + int((end[1] - self.origin[1]) * self.scale)
 
-        pygame.draw.line(self.screen, color=colour, start_pos=(sx, sy), end_pos=(ex, ey), width=width)
+        pygame.draw.line(
+            self.screen, color=colour, start_pos=(sx, sy), end_pos=(ex, ey), width=width
+        )
 
     def draw_circle(self, center, colour, radius=2, use_transparency=False):
         if use_transparency:
@@ -121,7 +129,16 @@ class Window:
         if use_transparency:
             self.screen.blit(self.tmp_screen, (0, 0))
 
-    def draw_rect(self, center, height, width=None, colour=Colours.pink, border_width=0, border_colour=None, use_transparency=False):
+    def draw_rect(
+        self,
+        center,
+        height,
+        width=None,
+        colour=Colours.pink,
+        border_width=0,
+        border_colour=None,
+        use_transparency=False,
+    ):
         if width is None:
             width = height
 
@@ -135,8 +152,10 @@ class Window:
             draw_screen,
             color=colour,
             rect=(
-                self.xmargin + int((center[0] - width / 2.0 - self.origin[0]) * self.scale),
-                self.ymargin + int((center[1] - height / 2.0 - self.origin[1]) * self.scale),
+                self.xmargin
+                + int((center[0] - width / 2.0 - self.origin[0]) * self.scale),
+                self.ymargin
+                + int((center[1] - height / 2.0 - self.origin[1]) * self.scale),
                 int(width * self.scale),
                 int(height * self.scale),
             ),
@@ -149,8 +168,10 @@ class Window:
                 draw_screen,
                 color=border_colour,
                 rect=(
-                    self.xmargin + int((center[0] - width / 2.0 - self.origin[0]) * self.scale),
-                    self.ymargin + int((center[1] - height / 2.0 - self.origin[1]) * self.scale),
+                    self.xmargin
+                    + int((center[0] - width / 2.0 - self.origin[0]) * self.scale),
+                    self.ymargin
+                    + int((center[1] - height / 2.0 - self.origin[1]) * self.scale),
                     int(width * self.scale),
                     int(height * self.scale),
                 ),
@@ -160,7 +181,16 @@ class Window:
         if use_transparency:
             self.screen.blit(self.tmp_screen, (0, 0))
 
-    def draw_triangle(self, center, size, orientation, colour, border_width=0, border_colour=None, use_transparency=False):
+    def draw_triangle(
+        self,
+        center,
+        size,
+        orientation,
+        colour,
+        border_width=0,
+        border_colour=None,
+        use_transparency=False,
+    ):
         # points = [
         #     (0, size / sqrt(3)),
         #     (-size / 2, -size / (2 * sqrt(3))),
@@ -169,8 +199,11 @@ class Window:
         # a pointier triangle
         points = [
             (size / sqrt(3), 0),
-            (-size / (2 * sqrt(3)), -size / 3, ),
-            (-size / (2 * sqrt(3)),  size / 3 ),
+            (
+                -size / (2 * sqrt(3)),
+                -size / 3,
+            ),
+            (-size / (2 * sqrt(3)), size / 3),
         ]
         # rotate the points
         points = [
@@ -181,7 +214,13 @@ class Window:
             for x, y in points
         ]
         points = [(x + center[0], y + center[1]) for x, y in points]
-        self.draw_polygon(fill_colour=colour, points=points, border_width=border_width, border_colour=border_colour, use_transparency=use_transparency)
+        self.draw_polygon(
+            fill_colour=colour,
+            points=points,
+            border_width=border_width,
+            border_colour=border_colour,
+            use_transparency=use_transparency,
+        )
 
     def draw_polygon(
         self,
@@ -206,13 +245,17 @@ class Window:
             if fill_colour is not None:
                 pygame.draw.polygon(self.tmp_screen, fill_colour, points, 0)
             if border_width > 0:
-                pygame.draw.polygon(self.tmp_screen, border_colour, points, width=border_width)
+                pygame.draw.polygon(
+                    self.tmp_screen, border_colour, points, width=border_width
+                )
             self.screen.blit(self.tmp_screen, (0, 0))
         else:
             if fill_colour is not None:
                 pygame.draw.polygon(self.screen, fill_colour, points, 0)
             if border_width > 0:
-                pygame.draw.polygon(self.screen, border_colour, points, width=border_width)
+                pygame.draw.polygon(
+                    self.screen, border_colour, points, width=border_width
+                )
 
     # Quick image rotation
     #   https://stackoverflow.com/questions/4183208/how-do-i-rotate-an-image-around-its-center-using-pygame
@@ -286,11 +329,15 @@ class Window:
         )
 
         text = self.status_font.render(time_str, False, STATUS_FONT_COLOUR)
-        self.screen.blit(text, (self.xmargin + STATUS_XMARGIN, self.ymargin + STATUS_YMARGIN))
+        self.screen.blit(
+            text, (self.xmargin + STATUS_XMARGIN, self.ymargin + STATUS_YMARGIN)
+        )
 
     def display(self):
         if self.display_screen is None:
-            self.display_screen = pygame.display.set_mode((self.screen_width, self.screen_height))
+            self.display_screen = pygame.display.set_mode(
+                (self.screen_width, self.screen_height)
+            )
             pygame.display.set_caption("Target Grid")
         self.display_screen.blit(self.screen, (0, 0))
         pygame.display.flip()
@@ -304,11 +351,10 @@ class Window:
         # keep the framerate stable.
         self.clock.tick(self.frame_rate)
 
-
-
-
     def render(self):
-        return np.transpose(np.array(pygame.surfarray.pixels3d(self.screen)), axes=(1, 0, 2))
+        return np.transpose(
+            np.array(pygame.surfarray.pixels3d(self.screen)), axes=(1, 0, 2)
+        )
 
     def save_screen(self, path):
         pygame.image.save(self.screen, path)

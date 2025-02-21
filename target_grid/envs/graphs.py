@@ -1,29 +1,28 @@
 """
 graph-animation.py
 
-Animate an arbitrary graph for testing, and solving instances of Stochatic Shortest Paths
+Animate an arbitrary graph for testing, and solving instances of Stochatic
+Shortest Paths
 """
 
 import networkx as nx
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import matplotlib.transforms as transforms
-import os
-import argparse
-from enum import Enum
 
-from util.dotdict import DotDict
-
-from window import Window, Colours
+from window import Colours
 
 # set the display width for numpy to wide
 np.set_printoptions(linewidth=np.inf)
 
 
 class Graph:
-
-    def __init__(self, edge_probability=0.5, seed=None, color_map="spring", method="random", **kwargs):
+    def __init__(
+        self,
+        edge_probability=0.5,
+        seed=None,
+        color_map="spring",
+        method="random",
+        **kwargs
+    ):
 
         self.rng = np.random.default_rng(seed=seed)
         self.seed = seed
@@ -111,12 +110,6 @@ class Graph:
 
         return matrix
 
-    def validate_node(self, start, action):
-        """
-        Get the next node from the current node and action
-        """
-        raise NotImplementedError
-
     @staticmethod
     def prep_graph(G, shape=None):
         # Initialize the position of nodes for consistent layout
@@ -144,8 +137,8 @@ class Graph:
         connected.
         Parameters:
         n (int): The number of nodes in the graph.
-        edge_probability (float, optional): The probability of retaining an edge in the graph.
-                                             Default is 0.5.
+        edge_probability (float, optional): The probability of retaining an edge in
+            the graph. Default is 0.5.
         Returns:
         networkx.Graph: A randomly generated graph with `n` nodes.
         """
@@ -167,12 +160,16 @@ class Graph:
             if remove_edge() > edge_probability:
                 G.remove_edge(*edge)
                 if not nx.is_connected(G):
-                    G.add_edge(*edge)  # Re-add the edge if the graph becomes disconnected
+                    G.add_edge(
+                        *edge
+                    )  # Re-add the edge if the graph becomes disconnected
 
         return G
 
     @staticmethod
-    def create_grid_graph(grid: np.array, edge_probability=0.5, generator=None, **kwargs):
+    def create_grid_graph(
+        grid: np.array, edge_probability=0.5, generator=None, **kwargs
+    ):
         """
         Create a Euclidean graph with a specified grid size and edge probability.
         This function generates a grid graph with the specified `grid` size and then
@@ -180,10 +177,11 @@ class Graph:
         graph remains connected.
         Parameters:
         grid (tuple): The grid size of the graph as a tuple (rows, cols).
-        edge_probability (float, optional): The probability of retaining an edge in the graph.
-                                             Default is 0.5.
+        edge_probability (float, optional): The probability of retaining an edge
+                                            in the graph. Default is 0.5.
         Returns:
-        networkx.Graph: A randomly generated Euclidean graph with the specified grid size.
+        networkx.Graph: A randomly generated Euclidean graph with the specified
+                        grid size.
         """
 
         rows, cols = grid.shape
@@ -236,7 +234,14 @@ class Graph:
 
 
 class GridGraph(Graph):
-    def __init__(self, edge_probability=0.5, seed=None, color_map="spring", method="euclidean", **kwargs):
+    def __init__(
+        self,
+        edge_probability=0.5,
+        seed=None,
+        color_map="spring",
+        method="euclidean",
+        **kwargs
+    ):
 
         super().__init__(edge_probability, seed, color_map, method, **kwargs)
 
@@ -248,7 +253,9 @@ class GridGraph(Graph):
         if self.grid_data is None:
             raise ValueError("grid must be specified for euclidean graph")
         self.rows, self.cols = self.grid_data.shape
-        self.G = Graph.create_grid_graph(self.grid_data, self.edge_probability, connectivity=method)
+        self.G = Graph.create_grid_graph(
+            self.grid_data, self.edge_probability, connectivity=method
+        )
         self.n = self.rows * self.cols
         self.node_states = np.zeros(self.n)
 
@@ -265,9 +272,18 @@ class GridGraph(Graph):
             x, y = node[0] + 0.5, node[1] + 0.5
 
             # set the hue based on the node visibility
-            colour = np.array(Colours.light_blue) * current_visibility[node[1],node[0]] + (1 - current_visibility[node[1],node[0]]) * np.array(Colours.light_grey)
+            colour = np.array(Colours.light_blue) * current_visibility[
+                node[1], node[0]
+            ] + (1 - current_visibility[node[1], node[0]]) * np.array(
+                Colours.light_grey
+            )
             window.draw_rect(
-                center=(x, y), height=1, width=1, colour=colour, border_colour=Colours.black, border_width=1
+                center=(x, y),
+                height=1,
+                width=1,
+                colour=colour,
+                border_colour=Colours.black,
+                border_width=1,
             )
 
     def get_distances(self, node):
@@ -276,13 +292,22 @@ class GridGraph(Graph):
 
 
 class UndirectedGraph(Graph):
-    def __init__(self, edge_probability=0.5, seed=None, color_map="spring", method="random", **kwargs):
+    def __init__(
+        self,
+        edge_probability=0.5,
+        seed=None,
+        color_map="spring",
+        method="random",
+        **kwargs
+    ):
         super().__init__(edge_probability, seed, color_map, method, **kwargs)
 
         self.n = kwargs.get("n", 5)
         if self.n is None:
             raise ValueError("n must be specified for random graph")
-        self.G = Graph.create_undirected_graph(self.n, self.edge_probability, generator=self.rng)
+        self.G = Graph.create_undirected_graph(
+            self.n, self.edge_probability, generator=self.rng
+        )
         self.grid_data = None
 
         self.node_positions = nx.spring_layout(self.G, seed=747, scale=1, center=(0, 0))

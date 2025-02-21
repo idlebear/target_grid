@@ -9,8 +9,8 @@ from graphs import GridGraph
 
 from window import Colours
 
-class Object:
 
+class Object:
     def __init__(self, node, colour, **kwargs):
         self.node = node
         self.colour = colour
@@ -32,7 +32,13 @@ class Wall(Object):
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
         colour[3] = int(visibility * 255)
-        window.draw_rect(center=(self.node[0] + 0.5, self.node[1] + 0.5), height=1, width=1, colour=colour, use_transparency=True)
+        window.draw_rect(
+            center=(self.node[0] + 0.5, self.node[1] + 0.5),
+            height=1,
+            width=1,
+            colour=colour,
+            use_transparency=True,
+        )
 
 
 class Goal(Object):
@@ -45,7 +51,13 @@ class Goal(Object):
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
         colour[3] = int(visibility * 255)
-        window.draw_rect(center=(self.node[0] + 0.5, self.node[1] + 0.5), height=1, width=1, colour=colour, use_transparency=True)
+        window.draw_rect(
+            center=(self.node[0] + 0.5, self.node[1] + 0.5),
+            height=1,
+            width=1,
+            colour=colour,
+            use_transparency=True,
+        )
 
 
 class Target(Object):
@@ -81,15 +93,23 @@ class Target(Object):
             next_node = self.action_to_node(node=self.node, action=action)
             self.node = self.graph.validate_node(self.node, next_node)
         else:
-            raise ValueError("Target object must have an action_to_node function to step")
+            raise ValueError(
+                "Target object must have an action_to_node function to step"
+            )
 
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
         colour[3] = int(visibility * 255)
         border_colour = list(Colours.black)
         border_colour[3] = int(visibility * 255)
-        if self.angle_increment == None:
-            window.draw_circle(center=(self.node[0] + 0.5, self.node[1] + 0.5), radius=0.5, colour=colour, border_colour=border_colour, use_transparency=True)
+        if self.angle_increment is None:
+            window.draw_circle(
+                center=(self.node[0] + 0.5, self.node[1] + 0.5),
+                radius=0.5,
+                colour=colour,
+                border_colour=border_colour,
+                use_transparency=True,
+            )
         else:
             window.draw_triangle(
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
@@ -100,6 +120,7 @@ class Target(Object):
                 border_colour=border_colour,
                 use_transparency=True,
             )
+
 
 class Agent(Object):
     def __init__(self, node, colour=(0, 0, 255), **kwargs):
@@ -117,13 +138,18 @@ class Agent(Object):
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
         colour[3] = int(visibility * 255)
-        if self.angle_increment == None:
-            window.draw_circle(center=(self.node[0] + 0.5, self.node[1] + 0.5), radius=0.5, colour=colour, use_transparency=True)
+        if self.angle_increment is None:
+            window.draw_circle(
+                center=(self.node[0] + 0.5, self.node[1] + 0.5),
+                radius=0.5,
+                colour=colour,
+                use_transparency=True,
+            )
         else:
             window.draw_equilateral_triangle(
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
                 side=0.75,
                 orientation=self.orientation * self.angle_increment,
                 colour=colour,
-                use_transparency=True
+                use_transparency=True,
             )
