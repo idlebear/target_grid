@@ -5,9 +5,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["target_grid"]
 
+
 [project]
 name = "target_grid"
-version = "0.0.1"
+version = "0.1.0"
+description = "A Gymnasium Environment for tracking and avoiding moving targets."
+readme = "README.md"
 dependencies = [
   "gymnasium",
   "pygame>=2.1.3",
@@ -16,3 +19,21 @@ dependencies = [
     "numpy",
     "pycuda",
 ]
+requires-python = ">=3.8"
+authors = [
+  {name = "Barry Gilhuly", email = "barry.gilhuly@uwaterloo.ca"},
+]
+maintainers = [
+  {name = "Barry Gilhuly", email = "barry.gilhuly@uwaterloo.ca"},
+]
+license = "MIT"  # or license = {file = "LICENSE.txt"} for legacy declaration
+license-files = ["LICEN[CS]E.*"]
+keywords = ["polycheck", "visibility", "raycasting"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+
+[project.urls]
+Repository = "https://github.com/idlebear/target_grid.git (pending)"
+

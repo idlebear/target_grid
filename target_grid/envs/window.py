@@ -1,7 +1,8 @@
 import numpy as np
 import pygame
 from math import sqrt
-from util import DotDict
+
+from .util import DotDict
 
 SCREEN_WIDTH = 1000
 SCREEN_HEIGHT = 1000

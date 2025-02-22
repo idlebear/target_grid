@@ -4,13 +4,14 @@ from gymnasium import spaces
 import numpy as np
 import os
 
-from graphs import GridGraph
-from objects import Wall, Goal, Target, Agent, Hazard
-from window import Colours, Window, SCREEN_HEIGHT, SCREEN_WIDTH
 from polycheck import (
     # visibility_from_real_region,
     visibility_from_region,
 )
+
+from .graphs import GridGraph
+from .objects import Wall, Goal, Target, Agent, Hazard
+from .window import Colours, Window, SCREEN_HEIGHT, SCREEN_WIDTH
 
 
 class Actions(Enum):

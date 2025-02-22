@@ -8,7 +8,7 @@ Shortest Paths
 import networkx as nx
 import numpy as np
 
-from window import Colours
+from .window import Colours
 
 # set the display width for numpy to wide
 np.set_printoptions(linewidth=np.inf)

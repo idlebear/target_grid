@@ -4,10 +4,8 @@ This module defines objects that are capable of moving and drawing themselves.
 
 import numpy as np
 
-from window import Window
-from graphs import GridGraph
-
-from window import Colours
+from .window import Window, Colours
+from .graphs import GridGraph
 
 
 class Object:
@@ -155,14 +153,20 @@ class Agent(Object):
     def __init__(self, node, colour=(0, 0, 255), **kwargs):
         super().__init__(node, colour)
         self.orientation = kwargs.get("orientation", 0)
-        if "action_space_size" in kwargs:
-            self.angle_increment = np.pi * 2.0 / kwargs["action_space_size"]
+        self.action_space_size = kwargs.get("action_space_size", 0)
+        if self.action_space_size > 0:
+            self.angle_increment = np.pi * 2.0 / self.action_space_size
         else:
-            self.angle_increment = None
+            self.angle_increment = 0
+        self.rng = kwargs.get("rng", np.random.default_rng())
+        self.step_function = kwargs.get("step_function", self._default_step)
 
-    def step(self, graph: GridGraph, action: int):
+    def _default_step(self, graph: GridGraph, action: int):
         self.orientation = action
         self.node = graph.next_node(self.node, action)
+
+    def step(self, graph: GridGraph, action: int):
+        self.step_function(graph, action)
 
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
