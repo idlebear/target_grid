@@ -57,6 +57,7 @@ class Window:
         frame_rate=4,
     ):
 
+        pygame.font.init()
         self.sim_time_text = pygame.font.SysFont("dejavuserif", 15)
         self.elapsed_time_text = pygame.font.SysFont("dejavuserif", 10)
         self.status_font = pygame.font.SysFont("roboto", STATUS_FONT_SIZE)
@@ -104,15 +105,24 @@ class Window:
             self.draw_line(start, end, colour, width)
             start = end
 
-    def draw_line(self, start, end, colour, width=2):
+    def draw_line(self, start, end, colour, width=2, use_transparency=False):
         sx = self.xmargin + int((start[0] - self.origin[0]) * self.scale)
         sy = self.ymargin + int((start[1] - self.origin[1]) * self.scale)
         ex = self.xmargin + int((end[0] - self.origin[0]) * self.scale)
         ey = self.ymargin + int((end[1] - self.origin[1]) * self.scale)
 
+        if use_transparency:
+            self.tmp_screen.fill((0, 0, 0, 0))
+            draw_screen = self.tmp_screen
+        else:
+            draw_screen = self.screen
+
         pygame.draw.line(
-            self.screen, color=colour, start_pos=(sx, sy), end_pos=(ex, ey), width=width
+            draw_screen, color=colour, start_pos=(sx, sy), end_pos=(ex, ey), width=width
         )
+
+        if use_transparency:
+            self.screen.blit(self.tmp_screen, (0, 0))
 
     def draw_circle(self, center, colour, radius=2, use_transparency=False):
         if use_transparency:
@@ -356,7 +366,7 @@ class Window:
             np.array(pygame.surfarray.pixels3d(self.screen)), axes=(1, 0, 2)
         )
 
-    def save_screen(self, path):
+    def save_frame(self, path):
         pygame.image.save(self.screen, path)
 
     def close(self):

@@ -1,1 +1,3 @@
-from python.target_grid.target_grid.envs.target_world import GridWorldEnv
+from target_grid.envs.target_world import TargetWorldEnv
+
+__all__ = ["TargetWorldEnv"]

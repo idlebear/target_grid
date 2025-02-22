@@ -2,12 +2,15 @@ from enum import Enum
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-
+import os
 
 from graphs import GridGraph
-from objects import Wall, Goal, Target, Agent
+from objects import Wall, Goal, Target, Agent, Hazard
 from window import Colours, Window, SCREEN_HEIGHT, SCREEN_WIDTH
-from polycheck import visibility_from_real_region  # , visibility_from_region
+from polycheck import (
+    # visibility_from_real_region,
+    visibility_from_region,
+)
 
 
 class Actions(Enum):
@@ -44,25 +47,42 @@ class GridState(Enum):
     agent = 30
     goal = 40
     occluded = 50
-    collision = 80
+    collision = 70
+    hazard = 80
     wall = 100
     max_value = 100
 
 
 class TargetWorldEnv(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
+    metadata = {"render_modes": ["human", "rgb_array", "file"], "render_fps": 4}
 
     def __init__(
         self,
         render_mode=None,
         size=10,
-        grid_data=None,
         seed=None,
-        agent_start_pos=None,
-        agent_start_dir=None,
-        goal_pos=None,
+        world_parameters=None,
     ):
         super().__init__()
+
+        if world_parameters is not None:
+            self.grid_data = world_parameters.get("grid_data")
+            self.agent_start_pos = world_parameters.get("agent_start_pos")
+            self.agent_start_dir = world_parameters.get("agent_start_dir")
+            self.goal_pos = world_parameters.get("goal_pos")
+            self.hazard_cost = world_parameters.get("hazard_cost")
+            self.num_targets = world_parameters.get("num_targets")
+            self.target_move_prob = world_parameters.get("target_move_prob")
+            self.agent = world_parameters.get("agent")
+        else:
+            self.grid_data = None
+            self.agent_start_pos = None
+            self.agent_start_dir = None
+            self.goal_pos = None
+            self.hazard_cost = 0
+            self.num_targets = 1
+            self.target_move_prob = None
+            self.agent = None
 
         if seed is not None:
             self.seed = seed
@@ -71,10 +91,6 @@ class TargetWorldEnv(gym.Env):
             self.rng = np.random.default_rng()
 
         self.size = size
-        self.agent_start_pos = agent_start_pos
-        self.agent_start_dir = agent_start_dir
-        self.goal_pos = goal_pos
-        self.grid_data = grid_data
 
         # observations are a dictionary with keys for agent and target locations,
         # as well as a grid showing the visible portion of the world
@@ -94,8 +110,10 @@ class TargetWorldEnv(gym.Env):
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
+        if render_mode == "file":
+            os.makedirs("render", exist_ok=True)
 
-        self.agent = None
+        # initialize the environment
         self.goal = None
         self.targets = []
         self.objects = []
@@ -126,26 +144,31 @@ class TargetWorldEnv(gym.Env):
         if self.grid_data is None:
             visibility = np.ones((self.size, self.size))
         else:
-            height, width = self.grid_data.shape
-            ends = np.array([[i, j] for j in range(height) for i in range(width)]) + 0.5
+            occlusions = np.where(self.grid_data == 2, 1, 0)
+
+            height, width = occlusions.shape
+            ends = np.array(
+                [[i, j] for j in range(height) for i in range(width)]
+            )  # + 0.5
             start = (
                 np.array(
                     [
                         x,
                     ]
                 )
-                + 0.5
+                # + 0.5
             )
-            visibility = visibility_from_real_region(
-                data=self.grid_data,
-                origin=(0, 0),
-                resolution=1.0,
-                starts=start,
-                ends=ends,
-            ).reshape(height, width)
+            # visibility = visibility_from_real_region(
+            #     data=occlusions,
+            #     origin=(0, 0),
+            #     resolution=1.0,
+            #     starts=start,
+            #     ends=ends,
+            # ).reshape(height, width)
             # Bresenham's line algorithm (integer based)
-            # visibility = visibility_from_region(data=self.grid_data, starts=start,
-            #                                     ends=ends).reshape(height, width)
+            visibility = visibility_from_region(
+                data=occlusions, starts=start, ends=ends
+            ).reshape(height, width)
         self.visibility_cache[x] = visibility
         return visibility
 
@@ -156,16 +179,13 @@ class TargetWorldEnv(gym.Env):
             y = self.rng.integers(0, self.size, dtype=int)
             if self.grid_data[y, x] == 0 and self.goal_pos != (x, y):
                 break
-        return Agent(
-            node=(x, y),
-            orientation=self.rng.integers(0, Actions.action_space_size.value),
-            colour=Colours.blue,
-        )
+        return (x, y), self.rng.integers(0, Actions.action_space_size.value)
 
     def _get_obs(self):
         # base grid has the following values
         #   empty
         #   wall
+        #   hazard
         #   goal
         #   occluded
         self.current_visibility = self._visibility_fn(self.agent.node)
@@ -173,7 +193,10 @@ class TargetWorldEnv(gym.Env):
         obs_data[0, :, :] = self.current_visibility
         obs_data[0, :, :] *= GridState.occluded.value
         for obj in self.objects:
-            obs_data[0, obj.node[1], obj.node[0]] = GridState.wall.value
+            if type(obj) is Hazard:
+                obs_data[0, obj.node[1], obj.node[0]] = GridState.hazard.value
+            elif type(obj) is Wall:
+                obs_data[0, obj.node[1], obj.node[0]] = GridState.wall.value
         obs_data[0, self.goal.node[1], self.goal.node[0]] = GridState.goal.value
         obs_data[0, :, :] /= GridState.max_value.value
 
@@ -225,19 +248,29 @@ class TargetWorldEnv(gym.Env):
         # numpy array
         obs = list(zip(*self.grid_data.nonzero()))
         for y, x in obs:
-            wall = Wall(node=(x, y), colour=Colours.grey)
-            self.objects.append(wall)
+            if self.grid_data[y, x] == 2:
+                wall = Wall(node=(x, y), colour=Colours.grey)
+                self.objects.append(wall)
+            elif self.grid_data[y, x] == 1:
+                hazard = Hazard(node=(x, y), colour=Colours.red)
+                self.objects.append(hazard)
 
         # Place the agent
         if self.agent_start_pos is not None:
-            agent = Agent(
-                node=self.agent_start_pos,
-                orientation=self.agent_start_dir,
+            agent_node = self.agent_start_pos
+            agent_orientation = self.agent_start_dir
+        else:
+            agent_node, agent_orientation = self.place_agent()
+
+        if self.agent is not None:
+            self.agent.node = agent_node
+            self.agent.orientation = agent_orientation
+        else:
+            self.agent = Agent(
+                node=agent_node,
+                orientation=agent_orientation,
                 colour=Colours.blue,
             )
-            self.agent = agent
-        else:
-            self.agent = self.place_agent()
 
         if self.goal_pos is not None:
             self.goal = Goal(node=self.goal_pos, colour=Colours.green)
@@ -279,13 +312,17 @@ class TargetWorldEnv(gym.Env):
             rng=self.rng,
             action_to_node=action_to_node,
             graph=self.graph,
+            move_prob=self.target_move_prob,
         )
         self.targets = [target]
+
+        # reset the frame counter
+        self.frame_count = 0
 
         observation = self._get_obs()
         info = self._get_info()
 
-        if self.render_mode == "human":
+        if self.render_mode == "human" or self.render_mode == "file":
             self._render_frame()
 
         return observation, info
@@ -356,6 +393,9 @@ class TargetWorldEnv(gym.Env):
 
         if self.render_mode == "human":
             self.window.display()
+        elif self.render_mode == "file":
+            path = f"target_world_frame_{self.frame_count:04d}.png"
+            self.window.save_frame(path)
 
         else:  # rgb_array
             return self.window.render()
@@ -366,7 +406,37 @@ class TargetWorldEnv(gym.Env):
 
 
 if __name__ == "__main__":
-    env = TargetWorldEnv(render_mode="human")
+
+    world_parameters = {
+        "grid_data": np.array(
+            [
+                [0, 0, 0, 0, 0, 0, 2, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 2, 0, 0, 0],
+                [2, 2, 2, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 1, 1, 2, 0, 0, 0, 0],
+                [0, 0, 0, 1, 1, 2, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 2, 2, 2, 1, 1, 0, 0, 0],
+                [0, 0, 2, 0, 0, 0, 0, 0, 0, 0],
+            ]
+        ),
+        "agent_start_pos": (0, 0),
+        "agent_start_dir": 0,
+        "goal_pos": None,
+        "hazard_cost": 1,
+        "num_targets": 1,
+        "target_move_prob": None,
+        "agent": None,
+    }
+
+    env = TargetWorldEnv(
+        render_mode="human",
+        seed=13,
+        size=world_parameters["grid_data"].shape[0],
+        world_parameters=world_parameters,
+    )
     env.reset()
     for _ in range(100):
         env.step(env.action_space.sample())
