@@ -231,7 +231,8 @@ class TargetWorldEnv(gym.Env):
         super().reset(seed=seed)
         self.rng = np.random.default_rng(seed)
 
-        # Create an empty grid
+        # Create an empty grid, with only walls and empty (0,1) for the graph
+        # connectivity
         if self.grid_data is None:
             self.grid_data = np.zeros((self.size, self.size), dtype=int)
             for i in range(self.size):
@@ -240,10 +241,11 @@ class TargetWorldEnv(gym.Env):
                     if self.grid_data[y, x] == 0:
                         break
                 self.grid_data[y, x] = 1
+            graph_data = self.grid_data
+        else:
+            graph_data = np.where(self.grid_data == 2, 1, 0)
 
-        self.graph = GridGraph(
-            edge_probability=1.0, grid_data=self.grid_data, seed=seed
-        )
+        self.graph = GridGraph(edge_probability=1.0, grid_data=graph_data, seed=seed)
 
         # Place the obstacles in the grid by getting the indices of the obstacles in the
         # numpy array
@@ -358,8 +360,9 @@ class TargetWorldEnv(gym.Env):
         observation = self._get_obs()
         info = self._get_info()
 
-        if self.render_mode == "human":
+        if self.render_mode == "human" or self.render_mode == "file":
             self._render_frame()
+        self.frame_count += 1
 
         return observation, reward, terminated, False, info
 
@@ -395,9 +398,8 @@ class TargetWorldEnv(gym.Env):
         if self.render_mode == "human":
             self.window.display()
         elif self.render_mode == "file":
-            path = f"target_world_frame_{self.frame_count:04d}.png"
+            path = f"./render/target_world_frame_{self.frame_count:05d}.png"
             self.window.save_frame(path)
-
         else:  # rgb_array
             return self.window.render()
 

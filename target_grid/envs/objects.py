@@ -12,6 +12,9 @@ class Object:
     def __init__(self, node, colour, **kwargs):
         self.node = node
         self.colour = colour
+        # Ensure the colour has an alpha channel
+        if len(self.colour) != 4:
+            self.colour = tuple(list(self.colour)[:3] + [255])
 
     def step(self, graph: GridGraph, action: int):
         raise NotImplementedError
@@ -171,18 +174,24 @@ class Agent(Object):
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
         colour[3] = int(visibility * 255)
+        border_colour = list(Colours.black)
+        border_colour[3] = int(visibility * 255)
         if self.angle_increment is None:
             window.draw_circle(
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
                 radius=0.5,
                 colour=colour,
+                border_width=1,
+                border_colour=border_colour,
                 use_transparency=True,
             )
         else:
-            window.draw_equilateral_triangle(
+            window.draw_triangle(
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
-                side=0.75,
+                size=0.8,
                 orientation=self.orientation * self.angle_increment,
                 colour=colour,
+                border_width=1,
+                border_colour=border_colour,
                 use_transparency=True,
             )
