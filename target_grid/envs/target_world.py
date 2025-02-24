@@ -10,36 +10,8 @@ from polycheck import (
 )
 
 from .graphs import GridGraph
-from .objects import Wall, Goal, Target, Agent, Hazard
+from .objects import Wall, Goal, Target, Agent, Hazard, Actions
 from .window import Colours, Window, SCREEN_HEIGHT, SCREEN_WIDTH
-
-
-class Actions(Enum):
-    north = 0
-    north_east = 1
-    east = 2
-    south_east = 3
-    south = 4
-    south_west = 5
-    west = 6
-    north_west = 7
-    action_space_size = 8
-
-
-action_to_direction = {
-    Actions.north.value: np.array([1, 0]),
-    Actions.north_east.value: np.array([1, 1]),
-    Actions.east.value: np.array([0, 1]),
-    Actions.south_east.value: np.array([-1, 1]),
-    Actions.south.value: np.array([-1, 0]),
-    Actions.south_west.value: np.array([-1, -1]),
-    Actions.west.value: np.array([0, -1]),
-    Actions.north_west.value: np.array([1, -1]),
-}
-
-
-def action_to_node(node, action):
-    return tuple(np.add(node, action_to_direction[action]))
 
 
 class GridState(Enum):
@@ -300,24 +272,23 @@ class TargetWorldEnv(gym.Env):
 
         # We will sample the target's location randomly until it does not
         # coincide with the agent's location, or any of the walls, or the goal
-        while True:
-            x, y = self.rng.integers(0, self.size, size=2, dtype=int)
-            if (
-                self.grid_data[y, x] == 0
-                and (x, y) != self.agent.node
-                and (x, y) != self.goal.node
-            ):
-                break
-        target = Target(
-            node=(x, y),
-            colour=Colours.red,
-            action_space_size=Actions.action_space_size.value,
-            rng=self.rng,
-            action_to_node=action_to_node,
-            graph=self.graph,
-            move_prob=self.target_move_prob,
-        )
-        self.targets = [target]
+        self.targets = []
+        for _ in range(self.num_targets):
+            while True:
+                x, y = self.rng.integers(0, self.size, size=2, dtype=int)
+                if (
+                    self.grid_data[y, x] == 0
+                    and (x, y) != self.agent.node
+                    and (x, y) != self.goal.node
+                ):
+                    break
+            target = Target(
+                node=(x, y),
+                colour=Colours.red,
+                rng=self.rng,
+                move_prob=self.target_move_prob,
+            )
+            self.targets.append(target)
 
         # reset the frame counter
         self.frame_count = 0
@@ -332,8 +303,7 @@ class TargetWorldEnv(gym.Env):
 
     def step(self, action):
         # Map the action (element of {0,1,2,3}) to the direction we walk in
-        next_node = action_to_node(self.agent.node, action)
-        self.agent.node = self.graph.validate_node(self.agent.node, next_node)
+        self.agent.step(self.graph, action)
 
         # step all of the targets
         for target in self.targets:

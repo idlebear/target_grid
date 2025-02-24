@@ -3,9 +3,38 @@ This module defines objects that are capable of moving and drawing themselves.
 """
 
 import numpy as np
+from enum import Enum
 
 from .window import Window, Colours
 from .graphs import GridGraph
+
+
+class Actions(Enum):
+    north = 0
+    north_east = 1
+    east = 2
+    south_east = 3
+    south = 4
+    south_west = 5
+    west = 6
+    north_west = 7
+    action_space_size = 8
+
+
+action_to_direction = {
+    Actions.north.value: np.array([1, 0]),
+    Actions.north_east.value: np.array([1, 1]),
+    Actions.east.value: np.array([0, 1]),
+    Actions.south_east.value: np.array([-1, 1]),
+    Actions.south.value: np.array([-1, 0]),
+    Actions.south_west.value: np.array([-1, -1]),
+    Actions.west.value: np.array([0, -1]),
+    Actions.north_west.value: np.array([1, -1]),
+}
+
+
+def action_to_node(node, action):
+    return tuple(np.add(node, action_to_direction[action]))
 
 
 class Object:
@@ -101,13 +130,12 @@ class Target(Object):
     def __init__(self, node, colour=(255, 0, 0), **kwargs):
         super().__init__(node, colour)
         self.orientation = kwargs.get("orientation", 0)
-        self.action_space_size = kwargs.get("action_space_size", 0)
+        self.action_space_size = Actions.action_space_size.value
         if self.action_space_size > 0:
             self.angle_increment = np.pi * 2.0 / kwargs["action_space_size"]
         else:
             self.angle_increment = None
         self.rng = kwargs.get("rng", np.random.default_rng())
-        self.action_to_node = kwargs.get("action_to_node", None)
         self.graph = kwargs.get("graph", None)
         self.move_prob = kwargs.get("move_prob", None)
 
@@ -120,7 +148,7 @@ class Target(Object):
             else:
                 action = self.rng.integers(0, self.action_space_size)
             self.orientation = action
-            next_node = self.action_to_node(node=self.node, action=action)
+            next_node = action_to_node(node=self.node, action=action)
             self.node = self.graph.validate_node(self.node, next_node)
         else:
             raise ValueError(
@@ -164,12 +192,15 @@ class Agent(Object):
         self.rng = kwargs.get("rng", np.random.default_rng())
         self.step_function = kwargs.get("step_function", self._default_step)
 
-    def _default_step(self, graph: GridGraph, action: int):
-        self.orientation = action
-        self.node = graph.next_node(self.node, action)
+    @staticmethod
+    def _default_step(graph: GridGraph, node: tuple, action: int):
+        return graph.validate_node(node, action_to_node(node, action))
 
     def step(self, graph: GridGraph, action: int):
-        self.step_function(graph, action)
+        self.orientation = action
+        # BUGBUG - expecting the step function to handle the validation, allowing
+        #          jumps to nodes that aren't neighbours.
+        self.node = self.step_function(graph, self.node, action)
 
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
