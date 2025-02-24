@@ -116,13 +116,13 @@ class Goal(Object):
 
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
-        colour[3] = int(visibility * 255)
+        # goal is always visible
+        # colour[3] = int(visibility * 255)
         window.draw_rect(
             center=(self.node[0] + 0.5, self.node[1] + 0.5),
             height=1,
             width=1,
             colour=colour,
-            use_transparency=True,
         )
 
 
@@ -132,28 +132,22 @@ class Target(Object):
         self.orientation = kwargs.get("orientation", 0)
         self.action_space_size = Actions.action_space_size.value
         if self.action_space_size > 0:
-            self.angle_increment = np.pi * 2.0 / kwargs["action_space_size"]
+            self.angle_increment = np.pi * 2.0 / self.action_space_size
         else:
             self.angle_increment = None
         self.rng = kwargs.get("rng", np.random.default_rng())
-        self.graph = kwargs.get("graph", None)
         self.move_prob = kwargs.get("move_prob", None)
 
-    def step(self):
-        if self.action_to_node is not None:
-            if self.move_prob is not None:
-                # move according to the markov chain
-                # action = ...
-                pass
-            else:
-                action = self.rng.integers(0, self.action_space_size)
-            self.orientation = action
-            next_node = action_to_node(node=self.node, action=action)
-            self.node = self.graph.validate_node(self.node, next_node)
+    def step(self, graph: GridGraph):
+        if self.move_prob is not None:
+            # move according to the markov chain
+            # action = ...
+            pass
         else:
-            raise ValueError(
-                "Target object must have an action_to_node function to step"
-            )
+            action = self.rng.integers(0, self.action_space_size)
+        self.orientation = action
+        next_node = action_to_node(node=self.node, action=action)
+        self.node = graph.validate_node(self.node, next_node)
 
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)

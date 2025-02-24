@@ -307,7 +307,7 @@ class TargetWorldEnv(gym.Env):
 
         # step all of the targets
         for target in self.targets:
-            target.step()
+            target.step(self.graph)
 
         # if there is a collision, the episode is over
         for target in self.targets:
@@ -363,6 +363,10 @@ class TargetWorldEnv(gym.Env):
             target.draw(
                 self.window, self.current_visibility[target.node[1], target.node[0]]
             )
+
+        self.goal.draw(
+            self.window, self.current_visibility[self.goal.node[1], self.goal.node[0]]
+        )
         self.agent.draw(self.window)
 
         if self.render_mode == "human":
@@ -405,7 +409,7 @@ if __name__ == "__main__":
     }
 
     env = TargetWorldEnv(
-        render_mode="human",
+        render_mode="file",
         seed=13,
         size=world_parameters["grid_data"].shape[0],
         world_parameters=world_parameters,
