@@ -42,7 +42,7 @@ class TargetWorldEnv(gym.Env):
             self.grid_data = world_parameters.get("grid_data")
             self.agent_start_pos = world_parameters.get("agent_start_pos")
             self.agent_start_dir = world_parameters.get("agent_start_dir")
-            self.goal_pos = world_parameters.get("goal_pos")
+            self.goal_pos = world_parameters.get("goal_pos", [])
             self.hazard_cost = world_parameters.get("hazard_cost")
             self.num_targets = world_parameters.get("num_targets")
             self.target_move_prob = world_parameters.get("target_move_prob")
@@ -51,7 +51,7 @@ class TargetWorldEnv(gym.Env):
             self.grid_data = None
             self.agent_start_pos = None
             self.agent_start_dir = None
-            self.goal_pos = None
+            self.goal_pos = []
             self.hazard_cost = 0
             self.num_targets = 1
             self.target_move_prob = None
@@ -87,7 +87,7 @@ class TargetWorldEnv(gym.Env):
             os.makedirs("render", exist_ok=True)
 
         # initialize the environment
-        self.goal = None
+        self.goals = []
         self.targets = []
         self.objects = []
 
@@ -150,7 +150,12 @@ class TargetWorldEnv(gym.Env):
         while True:
             x = self.rng.integers(0, self.size, dtype=int)
             y = self.rng.integers(0, self.size, dtype=int)
-            if self.grid_data[y, x] == 0 and self.goal_pos != (x, y):
+            on_goal = False
+            for goal in self.goals:
+                if (x, y) == goal.node:
+                    on_goal = True
+                    break
+            if self.grid_data[y, x] == 0 and not on_goal:
                 break
         return (x, y), self.rng.integers(0, Actions.action_space_size.value)
 
@@ -165,21 +170,25 @@ class TargetWorldEnv(gym.Env):
         obs_data = np.zeros((3, self.size, self.size), dtype=float)
         obs_data[0, :, :] = self.current_visibility
         obs_data[0, :, :] *= GridState.occluded.value
+
         for obj in self.objects:
             if type(obj) is Hazard:
                 obs_data[0, obj.node[1], obj.node[0]] = GridState.hazard.value
             elif type(obj) is Wall:
                 obs_data[0, obj.node[1], obj.node[0]] = GridState.wall.value
-        obs_data[0, self.goal.node[1], self.goal.node[0]] = GridState.goal.value
+        for goal in self.goals:
+            obs_data[0, goal.node[1], goal.node[0]] = GridState.goal.value
         obs_data[0, :, :] /= GridState.max_value.value
 
         # second grid has location of the agent and the target
         #   target facing east (along x-axis)
         #   agent facing east
         for target in self.targets:
-            obs_data[1, target.node[1], target.node[0]] = (
-                GridState.target.value + target.orientation
-            )
+            # if the target is visible, set the appropriate value in the grid
+            if self.current_visibility[target.node[1], target.node[0]]:
+                obs_data[1, target.node[1], target.node[0]] = (
+                    GridState.target.value + target.orientation
+                )
         if obs_data[1, self.agent.node[1], self.agent.node[0]] != 0:
             obs_data[
                 1, self.agent.node[1], self.agent.node[0]
@@ -193,10 +202,15 @@ class TargetWorldEnv(gym.Env):
         # third grid has the distance to the goal
         obs_data[2, :, :] = self.distance_grid
 
-        return {"agent": self.agent.node, "goal": self.goal.node, "grid": obs_data}
+        # make a list of the goal nodes
+        goal_nodes = np.array([goal.node for goal in self.goals]).reshape(-1, 2)
+        return {"agent": self.agent.node, "goal": goal_nodes, "grid": obs_data}
 
     def _get_info(self):
-        return {"distance": self.graph.get_distance(self.agent.node, self.goal.node)}
+        distances = {}
+        for goal in self.goals:
+            distances[goal] = self.graph.get_distance(self.agent.node, goal.node)
+        return {"distance": distances}
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
@@ -221,6 +235,7 @@ class TargetWorldEnv(gym.Env):
 
         # Place the obstacles in the grid by getting the indices of the obstacles in the
         # numpy array
+        self.objects = []
         obs = list(zip(*self.grid_data.nonzero()))
         for y, x in obs:
             if self.grid_data[y, x] == 2:
@@ -247,8 +262,14 @@ class TargetWorldEnv(gym.Env):
                 colour=Colours.blue,
             )
 
+        # Place the goal
+        self.goals = []
         if self.goal_pos is not None:
-            self.goal = Goal(node=self.goal_pos, colour=Colours.green)
+            if type(self.goal_pos) is list:
+                for goal_pos in self.goal_pos:
+                    self.goals.append(Goal(node=tuple(goal_pos), colour=Colours.green))
+            else:
+                self.goals.append(Goal(node=tuple(self.goal_pos), colour=Colours.green))
         else:
             while True:
                 x, y = self.rng.integers(
@@ -261,13 +282,18 @@ class TargetWorldEnv(gym.Env):
                 )
                 if self.grid_data[y, x] == 0 and self.agent.node != (x, y):
                     break
-            self.goal = Goal(node=(x, y), colour=Colours.green)
+            self.goals.append(Goal(node=(x, y), colour=Colours.green))
 
-        # Update the distances to the goal for all nodes
-        distances = self.graph.get_distances(self.goal.node)
-        self.distance_grid = np.zeros_like(self.grid_data, dtype=float)
-        for node, distance in distances.items():
-            self.distance_grid[node[1], node[0]] = distance
+        # Update the distances to the goal(s) for all nodes
+        distances = []
+        for goal in self.goals:
+            d = self.graph.get_distances(goal.node)
+            node_distances = np.zeros((self.size, self.size))
+            for node, distance in d.items():
+                node_distances[node[1], node[0]] = distance
+            distances.append(node_distances)
+        distances = np.array(distances)
+        self.distance_grid = np.min(distances, axis=0)
         self.distance_grid /= float(np.max(self.distance_grid))  # normalize
 
         # We will sample the target's location randomly until it does not
@@ -276,11 +302,16 @@ class TargetWorldEnv(gym.Env):
         for _ in range(self.num_targets):
             while True:
                 x, y = self.rng.integers(0, self.size, size=2, dtype=int)
-                if (
-                    self.grid_data[y, x] == 0
-                    and (x, y) != self.agent.node
-                    and (x, y) != self.goal.node
-                ):
+                if self.grid_data[y, x]:
+                    continue
+                on_goal = False
+                for goal in self.goals:
+                    if (x, y) == goal.node:
+                        on_goal = True
+                        break
+                if on_goal:
+                    continue
+                if (x, y) != self.agent.node:
                     break
             target = Target(
                 node=(x, y),
@@ -319,7 +350,10 @@ class TargetWorldEnv(gym.Env):
                 return observation, reward, terminated, False, info
 
         # An episode is done iff the agent has reached the goal
-        terminated = np.array_equal(self.agent.node, self.goal.node)
+        for goal in self.goals:
+            terminated = np.array_equal(self.agent.node, goal.node)
+            if terminated:
+                break
         if terminated:
             reward = 10
         else:
@@ -358,15 +392,12 @@ class TargetWorldEnv(gym.Env):
 
         for obj in self.objects:
             obj.draw(self.window, self.current_visibility[obj.node[1], obj.node[0]])
-
         for target in self.targets:
             target.draw(
                 self.window, self.current_visibility[target.node[1], target.node[0]]
             )
-
-        self.goal.draw(
-            self.window, self.current_visibility[self.goal.node[1], self.goal.node[0]]
-        )
+        for goal in self.goals:
+            goal.draw(self.window, self.current_visibility[goal.node[1], goal.node[0]])
         self.agent.draw(self.window)
 
         if self.render_mode == "human":
