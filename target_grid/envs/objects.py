@@ -61,10 +61,10 @@ class Wall(Object):
 
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
-        if visibility < 1.0:
-            colour[3] = int(visibility * 127)
-        else:
-            colour[3] = 255
+        # if visibility < 1.0:
+        #     colour[3] = int(visibility * 127)
+        # else:
+        #     colour[3] = 255
         window.draw_rect(
             center=(self.node[0] + 0.5, self.node[1] + 0.5),
             height=1,
@@ -131,6 +131,7 @@ class Goal(Object):
             height=1,
             width=1,
             colour=colour,
+            use_transparency=True,
         )
 
 

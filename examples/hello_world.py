@@ -20,7 +20,7 @@ def main():
         ),
         "agent_start_pos": (0, 0),
         "agent_start_dir": 0,
-        "goal_pos": None,
+        "goal_pos": [(9, 9), (1, 8)],
         "hazard_cost": 1,
         "num_targets": 1,
         "target_move_prob": None,
@@ -28,7 +28,7 @@ def main():
     }
 
     env = TargetWorldEnv(
-        render_mode="file",
+        render_mode="human",
         seed=13,
         size=world_parameters["grid_data"].shape[0],
         world_parameters=world_parameters,

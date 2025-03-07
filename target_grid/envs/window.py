@@ -4,11 +4,6 @@ from math import sqrt
 
 from .util import DotDict
 
-SCREEN_WIDTH = 1000
-SCREEN_HEIGHT = 1000
-SCREEN_MARGIN = 120
-DEFAULT_DISPLAY_SIZE = 20
-
 
 Colours = DotDict(
     {
