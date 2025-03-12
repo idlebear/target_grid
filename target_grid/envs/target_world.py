@@ -112,6 +112,7 @@ class TargetWorldEnv(gym.Env):
 
         self.size = size
         self.max_retry = DEFAULT_MAX_RETRY
+        self.reset_count = 0
 
         # observations are a dictionary with keys for agent and target locations,
         # as well as a grid showing the visible portion of the world
@@ -225,9 +226,8 @@ class TargetWorldEnv(gym.Env):
     def add_goal(self, pos):
         self.goals.append(Goal(node=pos, colour=Colours.green))
 
-    def add_target(self, pos=None, move_prob=None):
-        target = self.place_target(pos, move_prob)
-        self.objects.append(target)
+    def set_target_move_prob(self, move_prob):
+        self.target_move_prob = move_prob
 
     def place_agent(self):
         # Choose the agent's location uniformly at random
@@ -305,12 +305,14 @@ class TargetWorldEnv(gym.Env):
         # second grid has location of the agent and the target
         #   target facing east (along x-axis)
         #   agent facing east
+        target_nodes = []
         for target in self.targets:
             # if the target is visible, set the appropriate value in the grid
             if self.current_visibility[target.node[1], target.node[0]]:
                 obs_data[1, target.node[1], target.node[0]] = (
                     GridState.TARGET.value + target.orientation
                 )
+                target_nodes.append(target.node)
         if obs_data[1, self.agent.node[1], self.agent.node[0]] != 0:
             obs_data[
                 1, self.agent.node[1], self.agent.node[0]
@@ -326,7 +328,12 @@ class TargetWorldEnv(gym.Env):
 
         # make a list of the goal nodes
         goal_nodes = np.array([goal.node for goal in self.goals]).reshape(-1, 2)
-        return {"agent": self.agent.node, "goal": goal_nodes, "grid": obs_data}
+        return {
+            "agent": self.agent.node,
+            "targets": target_nodes,
+            "goal": goal_nodes,
+            "grid": obs_data,
+        }
 
     def _get_info(self):
         distances = {}
@@ -334,11 +341,9 @@ class TargetWorldEnv(gym.Env):
             distances[goal] = self.graph.get_distance(self.agent.node, goal.node)
         return {"distance": distances}
 
-    def reset(self, seed=None, options=None):
-        # We need the following line to seed self.np_random
-        super().reset(seed=seed)
-        self.rng = np.random.default_rng(seed)
+    def reset(self, options=None):
         self.steps = 0
+        self.terminated = False
 
         # Place the obstacles in the grid by getting the indices of the obstacles in the
         # numpy array
@@ -366,6 +371,7 @@ class TargetWorldEnv(gym.Env):
             self.agent = Agent(
                 node=agent_node,
                 orientation=agent_orientation,
+                action_space_size=Actions.action_space_size.value,
                 colour=Colours.blue,
             )
 
@@ -377,35 +383,38 @@ class TargetWorldEnv(gym.Env):
                     self.goals.append(Goal(node=tuple(goal_pos), colour=Colours.green))
             else:
                 self.goals.append(Goal(node=tuple(self.goal_pos), colour=Colours.green))
-        else:
-            attempts = 0
-            while True:
-                x, y = self.rng.integers(
-                    0,
-                    self.size,
-                    [
-                        2,
-                    ],
-                    dtype=int,
-                )
-                if self.grid_data[y, x] == 0 and self.agent.node != (x, y):
-                    break
-                attempts += 1
-                if attempts >= self.max_retry:
-                    raise ValueError("Could not place the goal after 10 attempts")
-            self.goals.append(Goal(node=(x, y), colour=Colours.green))
+        # else:
+        #     attempts = 0
+        #     while True:
+        #         x, y = self.rng.integers(
+        #             0,
+        #             self.size,
+        #             [
+        #                 2,
+        #             ],
+        #             dtype=int,
+        #         )
+        #         if self.grid_data[y, x] == 0 and self.agent.node != (x, y):
+        #             break
+        #         attempts += 1
+        #         if attempts >= self.max_retry:
+        #             raise ValueError("Could not place the goal after 10 attempts")
+        #     self.goals.append(Goal(node=(x, y), colour=Colours.green))
 
         # Update the distances to the goal(s) for all nodes
-        distances = []
-        for goal in self.goals:
-            d = self.graph.get_distances(goal.node)
-            node_distances = np.zeros((self.size, self.size))
-            for node, distance in d.items():
-                node_distances[node[1], node[0]] = distance
-            distances.append(node_distances)
-        distances = np.array(distances)
-        self.distance_grid = np.min(distances, axis=0)
-        self.distance_grid /= float(np.max(self.distance_grid))  # normalize
+        if len(self.goals):
+            distances = []
+            for goal in self.goals:
+                d = self.graph.get_distances(goal.node)
+                node_distances = np.zeros((self.size, self.size))
+                for node, distance in d.items():
+                    node_distances[node[1], node[0]] = distance
+                distances.append(node_distances)
+            distances = np.array(distances)
+            self.distance_grid = np.min(distances, axis=0)
+            self.distance_grid /= float(np.max(self.distance_grid))  # normalize
+        else:
+            self.distance_grid = np.zeros((self.size, self.size))
 
         # We will sample the target's location randomly until it does not
         # coincide with the agent's location, or any of the walls, or the goal
@@ -415,10 +424,14 @@ class TargetWorldEnv(gym.Env):
             self.targets.append(target)
 
         # reset the frame counter
+        self.reset_count += 1
         self.frame_count = 0
 
         observation = self._get_obs()
         info = self._get_info()
+
+        if self.render_mode == "file":
+            os.makedirs(f"./render/{self.reset_count:05d}", exist_ok=True)
 
         if self.render_mode == "human" or self.render_mode == "file":
             self._render_frame()
@@ -426,6 +439,10 @@ class TargetWorldEnv(gym.Env):
         return observation, info
 
     def step(self, action):
+
+        if self.terminated:
+            return self._get_obs(), 0, True, True, self._get_info()
+
         self.steps += 1
         if self.steps >= self.max_steps:
             return self._get_obs(), 0, True, True, self._get_info()
@@ -438,20 +455,21 @@ class TargetWorldEnv(gym.Env):
             target.step(self.graph)
 
         # if there is a collision, the episode is over
-        for target in self.targets:
-            if np.array_equal(self.agent.node, target.node):
-                terminated = True
-                reward = self.hazard_cost
-                observation = self._get_obs()
-                info = self._get_info()
-                return observation, reward, terminated, False, info
+        if self.hazard_cost:
+            for target in self.targets:
+                if np.array_equal(self.agent.node, target.node):
+                    self.terminated = True
+                    reward = self.hazard_cost
+                    observation = self._get_obs()
+                    info = self._get_info()
+                    return observation, reward, self.terminated, False, info
 
         # An episode is done iff the agent has reached the goal
         for goal in self.goals:
-            terminated = np.array_equal(self.agent.node, goal.node)
-            if terminated:
+            self.terminated = np.array_equal(self.agent.node, goal.node)
+            if self.terminated:
                 break
-        if terminated:
+        if self.terminated:
             reward = self.terminal_cost
         else:
             reward = (
@@ -464,17 +482,17 @@ class TargetWorldEnv(gym.Env):
 
         if self.render_mode == "human" or self.render_mode == "file":
             self._render_frame()
-        self.frame_count += 1
 
-        return observation, reward, terminated, False, info
+        return observation, reward, self.terminated, False, info
 
     def render(self):
-        if self.render_mode == "rgb_array":
+        if self.render_mode == "rgb_array" or self.render_mode == "file":
             return self._render_frame()
 
     def _render_frame(self):
-        if self.window is None and self.render_mode == "human":
-            Window.initialize_screen()
+        self.frame_count += 1
+        if self.window is None:
+            Window.initialize(with_display=(self.render_mode == "human"))
 
         if self.window is None:
             self.window = Window(
@@ -490,18 +508,20 @@ class TargetWorldEnv(gym.Env):
 
         for obj in self.objects:
             obj.draw(self.window, self.current_visibility[obj.node[1], obj.node[0]])
+        for goal in self.goals:
+            goal.draw(self.window, self.current_visibility[goal.node[1], goal.node[0]])
         for target in self.targets:
             target.draw(
                 self.window, self.current_visibility[target.node[1], target.node[0]]
             )
-        for goal in self.goals:
-            goal.draw(self.window, self.current_visibility[goal.node[1], goal.node[0]])
         self.agent.draw(self.window)
 
         if self.render_mode == "human":
             self.window.display()
         elif self.render_mode == "file":
-            path = f"./render/target_world_frame_{self.frame_count:05d}.png"
+            path = (
+                f"./render/{self.reset_count:05d}/tw_frame_{self.frame_count:05d}.png"
+            )
             self.window.save_frame(path)
         else:  # rgb_array
             return self.window.render()

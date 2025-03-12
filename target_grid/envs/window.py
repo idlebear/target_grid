@@ -85,9 +85,10 @@ class Window:
     #     ]
 
     @staticmethod
-    def initialize_screen():
+    def initialize(with_display=True):
         pygame.init()
-        pygame.display.init()
+        if with_display:
+            pygame.display.init()
 
     def clear(self):
         self.screen.fill(SCREEN_BACKGROUND_COLOUR)
@@ -95,10 +96,10 @@ class Window:
     def get_drawing_scale(self):
         return self.scale
 
-    def draw_polyline(self, points, colour, width=2):
+    def draw_polyline(self, points, colour, width=2, use_transparency=False):
         start = points[0]
         for end in points[1:]:
-            self.draw_line(start, end, colour, width)
+            self.draw_line(start, end, colour, width, use_transparency)
             start = end
 
     def draw_line(self, start, end, colour, width=2, use_transparency=False):

@@ -3,38 +3,10 @@ This module defines objects that are capable of moving and drawing themselves.
 """
 
 import numpy as np
-from enum import Enum
 
-from .window import Window, Colours
+from .actions import Actions, action_to_node, node_to_action
 from .graphs import GridGraph
-
-
-class Actions(Enum):
-    north = 0
-    north_east = 1
-    east = 2
-    south_east = 3
-    south = 4
-    south_west = 5
-    west = 6
-    north_west = 7
-    action_space_size = 8
-
-
-action_to_direction = {
-    Actions.north.value: np.array([1, 0]),
-    Actions.north_east.value: np.array([1, 1]),
-    Actions.east.value: np.array([0, 1]),
-    Actions.south_east.value: np.array([-1, 1]),
-    Actions.south.value: np.array([-1, 0]),
-    Actions.south_west.value: np.array([-1, -1]),
-    Actions.west.value: np.array([0, -1]),
-    Actions.north_west.value: np.array([1, -1]),
-}
-
-
-def action_to_node(node, action):
-    return tuple(np.add(node, action_to_direction[action]))
+from .window import Window, Colours
 
 
 class Object:
@@ -122,15 +94,31 @@ class Goal(Object):
 
     def draw(self, window: Window, visibility: float = 1.0):
         colour = list(self.colour)
+        line_colour = list(Colours.black)
         if visibility < 1.0:
             colour[3] = int(visibility * 127)
         else:
             colour[3] = 255
+            line_colour[3] = int(visibility * 255)
         window.draw_rect(
             center=(self.node[0] + 0.5, self.node[1] + 0.5),
             height=1,
             width=1,
             colour=colour,
+            use_transparency=True,
+        )
+        # Draw an box to show the goal when ocluded. Transparency
+        # doesn't work with lines.
+        window.draw_polyline(
+            points=[
+                (self.node[0] + 0.25, self.node[1] + 0.25),
+                (self.node[0] + 0.75, self.node[1] + 0.25),
+                (self.node[0] + 0.75, self.node[1] + 0.75),
+                (self.node[0] + 0.25, self.node[1] + 0.75),
+                (self.node[0] + 0.25, self.node[1] + 0.25),
+            ],
+            colour=line_colour,
+            width=5,
             use_transparency=True,
         )
 
@@ -148,14 +136,20 @@ class Target(Object):
         self.move_prob = kwargs.get("move_prob", None)
 
     def step(self, graph: GridGraph):
+        if self.node is None:
+            return
+
         if self.move_prob is not None:
-            # move according to the markov chain
-            # action = ...
-            pass
+            node_index = graph.linear_index(self.node)
+            next_node_index = self.rng.choice(
+                len(self.move_prob[node_index]), p=self.move_prob[node_index]
+            )
+            next_node = graph.grid_index(next_node_index)
+            action = node_to_action(src=self.node, dst=next_node)
         else:
             action = self.rng.integers(0, self.action_space_size)
+            next_node = action_to_node(node=self.node, action=action)
         self.orientation = action
-        next_node = action_to_node(node=self.node, action=action)
         self.node = graph.validate_node(self.node, next_node)
 
     def draw(self, window: Window, visibility: float = 1.0):

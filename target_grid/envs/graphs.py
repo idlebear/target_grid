@@ -21,7 +21,7 @@ class Graph:
         seed=None,
         color_map="spring",
         method="random",
-        **kwargs
+        **kwargs,
     ):
 
         self.rng = np.random.default_rng(seed=seed)
@@ -195,6 +195,10 @@ class Graph:
                     G.add_edge((x, y), (x + 1, y + 1), weight=1)
                     G.add_edge((x + 1, y), (x, y + 1), weight=1)
 
+        # add self loops
+        for node in G.nodes:
+            G.add_edge(node, node, weight=1)
+
         if generator is None:
             shuffle = np.random.shuffle
             remove_edge = np.random.random
@@ -240,7 +244,7 @@ class GridGraph(Graph):
         seed=None,
         color_map="spring",
         method="euclidean",
-        **kwargs
+        **kwargs,
     ):
 
         super().__init__(edge_probability, seed, color_map, method, **kwargs)
@@ -298,7 +302,7 @@ class UndirectedGraph(Graph):
         seed=None,
         color_map="spring",
         method="random",
-        **kwargs
+        **kwargs,
     ):
         super().__init__(edge_probability, seed, color_map, method, **kwargs)
 
