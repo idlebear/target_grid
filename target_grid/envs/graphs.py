@@ -9,6 +9,8 @@ import networkx as nx
 import numpy as np
 
 from .window import Colours
+from .actions import node_to_action
+
 
 # set the display width for numpy to wide
 np.set_printoptions(linewidth=np.inf)
@@ -59,12 +61,24 @@ class Graph:
         """
 
         matrix = np.zeros((self.n, self.n))
+        valid_actions = {}
 
         for i, j in self.G.edges:
+            action = node_to_action(i, j)
+            if i in valid_actions:
+                valid_actions[i].append(action)
+            else:
+                valid_actions[i] = [action]
             matrix[self.linear_index(i), self.linear_index(j)] = 1
+
+            action = node_to_action(j, i)
+            if j in valid_actions:
+                valid_actions[j].append(action)
+            else:
+                valid_actions[j] = [action]
             matrix[self.linear_index(j), self.linear_index(i)] = 1
 
-        return matrix
+        return matrix, valid_actions
 
     def get_distance(self, start, goal):
         """
