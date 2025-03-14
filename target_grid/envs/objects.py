@@ -23,6 +23,9 @@ class Object:
     def draw(self, window: Window):
         raise NotImplementedError
 
+    def copy(self):
+        return self.__class__(self.node, self.colour)
+
 
 class Wall(Object):
     def __init__(self, node, colour=(0, 0, 0), **kwargs):
@@ -135,6 +138,15 @@ class Target(Object):
         self.rng = kwargs.get("rng", np.random.default_rng())
         self.move_prob = kwargs.get("move_prob", None)
 
+    def copy(self):
+        new_target = self.__class__(self.node, self.colour)
+        new_target.orientation = self.orientation
+        new_target.action_space_size = self.action_space_size
+        new_target.angle_increment = self.angle_increment
+        new_target.rng = self.rng
+        new_target.move_prob = self.move_prob
+        return new_target
+
     def step(self, graph: GridGraph):
         if self.node is None:
             return
@@ -188,6 +200,15 @@ class Agent(Object):
             self.angle_increment = 0
         self.rng = kwargs.get("rng", np.random.default_rng())
         self.step_function = kwargs.get("step_function", self._default_step)
+
+    def copy(self):
+        new_agent = self.__class__(self.node, self.colour)
+        new_agent.orientation = self.orientation
+        new_agent.action_space_size = self.action_space_size
+        new_agent.angle_increment = self.angle_increment
+        new_agent.rng = self.rng
+        new_agent.step_function = self.step_function
+        return new_agent
 
     @staticmethod
     def _default_step(graph: GridGraph, node: tuple, action: int):
