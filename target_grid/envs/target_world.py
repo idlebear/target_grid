@@ -313,6 +313,8 @@ class TargetWorldEnv(gym.Env):
                     GridState.TARGET.value + target.orientation
                 )
                 target_nodes.append(target.node)
+            else:
+                target_nodes.append(None)
         if obs_data[1, self.agent.node[1], self.agent.node[0]] != 0:
             obs_data[
                 1, self.agent.node[1], self.agent.node[0]
