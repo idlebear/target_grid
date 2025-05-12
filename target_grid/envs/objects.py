@@ -6,16 +6,16 @@ import numpy as np
 
 from .actions import Actions, action_to_node, node_to_action
 from .graphs import GridGraph
-from .window import Window, Colours
+from .window import Window, Colors
 
 
 class Object:
-    def __init__(self, node, colour, **kwargs):
+    def __init__(self, node, color, **kwargs):
         self.node = node
-        self.colour = colour
-        # Ensure the colour has an alpha channel
-        if len(self.colour) != 4:
-            self.colour = tuple(list(self.colour)[:3] + [255])
+        self.color = color
+        # Ensure the color has an alpha channel
+        if len(self.color) != 4:
+            self.color = tuple(list(self.color)[:3] + [255])
 
     def step(self, graph: GridGraph, action: int):
         raise NotImplementedError
@@ -24,90 +24,92 @@ class Object:
         raise NotImplementedError
 
     def copy(self):
-        return self.__class__(self.node, self.colour)
+        return self.__class__(self.node, self.color)
 
 
 class Wall(Object):
-    def __init__(self, node, colour=(0, 0, 0), **kwargs):
-        super().__init__(node, colour)
+    def __init__(self, node, color=(0, 0, 0), **kwargs):
+        super().__init__(node, color)
 
     def step(self, graph: GridGraph, action: int):
         pass
 
     def draw(self, window: Window, visibility: float = 1.0):
-        colour = list(self.colour)
+        color = list(self.color)
         # if visibility < 1.0:
-        #     colour[3] = int(visibility * 127)
+        #     color[3] = int(visibility * 127)
         # else:
-        #     colour[3] = 255
+        #     color[3] = 255
         window.draw_rect(
             center=(self.node[0] + 0.5, self.node[1] + 0.5),
             height=1,
             width=1,
-            colour=colour,
+            color=color,
             use_transparency=True,
         )
 
 
 class Hazard(Object):
-    def __init__(self, node, colour=(0, 0, 0), **kwargs):
-        super().__init__(node, colour)
+    def __init__(self, node, color=(0, 0, 0), **kwargs):
+        super().__init__(node, color)
 
     def step(self, graph: GridGraph, action: int):
         pass
 
     def draw(self, window: Window, visibility: float = 1.0):
-        colour = list(self.colour)
-        line_colour = list(Colours.black)
+        color = list(self.color)
+        line_color = list(Colors.black)
         if visibility < 1.0:
-            colour[3] = int(visibility * 127)
+            color[3] = int(visibility * 127)
         else:
-            colour[3] = 255
-            line_colour[3] = int(visibility * 255)
+            color[3] = 255
+            line_color[3] = int(visibility * 255)
         window.draw_rect(
             center=(self.node[0] + 0.5, self.node[1] + 0.5),
             height=1,
             width=1,
-            colour=colour,
+            color=None,
+            border_width=5,
+            border_color=color,
             use_transparency=True,
         )
         # Draw an x through the hazard
         window.draw_line(
             start=(self.node[0] + 0.25, self.node[1] + 0.25),
             end=(self.node[0] + 0.75, self.node[1] + 0.75),
-            colour=line_colour,
+            color=color,
             width=5,
             use_transparency=True,
         )
         window.draw_line(
             start=(self.node[0] + 0.75, self.node[1] + 0.25),
             end=(self.node[0] + 0.25, self.node[1] + 0.75),
-            colour=line_colour,
+            color=color,
             width=5,
             use_transparency=True,
         )
 
 
 class Goal(Object):
-    def __init__(self, node, colour=(0, 255, 0), **kwargs):
-        super().__init__(node, colour)
+    def __init__(self, node, color=(0, 255, 0), **kwargs):
+        super().__init__(node, color)
 
     def step(self, graph: GridGraph, action: int):
         pass
 
     def draw(self, window: Window, visibility: float = 1.0):
-        colour = list(self.colour)
-        line_colour = list(Colours.black)
+        color = list(self.color)
+        line_color = list(Colors.black)
         if visibility < 1.0:
-            colour[3] = int(visibility * 127)
+            color[3] = int(visibility * 127)
         else:
-            colour[3] = 255
-            line_colour[3] = int(visibility * 255)
+            color[3] = 255
+            line_color[3] = int(visibility * 255)
         window.draw_rect(
             center=(self.node[0] + 0.5, self.node[1] + 0.5),
             height=1,
             width=1,
-            colour=colour,
+            color=color,
             use_transparency=True,
         )
         # Draw an box to show the goal when ocluded. Transparency
@@ -120,15 +122,15 @@ class Goal(Object):
                 (self.node[0] + 0.25, self.node[1] + 0.75),
                 (self.node[0] + 0.25, self.node[1] + 0.25),
             ],
-            colour=line_colour,
+            color=line_color,
             width=5,
             use_transparency=True,
         )
 
 
 class Target(Object):
-    def __init__(self, node, colour=(255, 0, 0), **kwargs):
-        super().__init__(node, colour)
+    def __init__(self, node, color=(255, 0, 0), **kwargs):
+        super().__init__(node, color)
         self.orientation = kwargs.get("orientation", 0)
         self.action_space_size = Actions.action_space_size.value
         if self.action_space_size > 0:
@@ -139,7 +141,7 @@ class Target(Object):
         self.move_prob = kwargs.get("move_prob", None)
 
     def copy(self):
-        new_target = self.__class__(self.node, self.colour)
+        new_target = self.__class__(self.node, self.color)
         new_target.orientation = self.orientation
         new_target.action_space_size = self.action_space_size
         new_target.angle_increment = self.angle_increment
@@ -165,16 +167,16 @@ class Target(Object):
         self.node = graph.validate_node(self.node, next_node)
 
     def draw(self, window: Window, visibility: float = 1.0):
-        colour = list(self.colour)
-        colour[3] = int(visibility * 255)
-        border_colour = list(Colours.black)
-        border_colour[3] = int(visibility * 255)
+        color = list(self.color)
+        color[3] = int(visibility * 255)
+        border_color = list(Colors.black)
+        border_color[3] = int(visibility * 255)
         if self.angle_increment is None:
             window.draw_circle(
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
                 radius=0.5,
-                colour=colour,
-                border_colour=border_colour,
+                color=color,
+                border_color=border_color,
                 use_transparency=True,
             )
         else:
@@ -182,16 +184,16 @@ class Target(Object):
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
                 size=0.75,
                 orientation=self.orientation * self.angle_increment,
-                colour=colour,
+                color=color,
                 border_width=1,
-                border_colour=border_colour,
+                border_color=border_color,
                 use_transparency=True,
             )
 
 
 class Agent(Object):
-    def __init__(self, node, colour=(0, 0, 255), **kwargs):
-        super().__init__(node, colour)
+    def __init__(self, node, color=(0, 0, 255), **kwargs):
+        super().__init__(node, color)
         self.orientation = kwargs.get("orientation", 0)
         self.action_space_size = kwargs.get("action_space_size", 0)
         if self.action_space_size > 0:
@@ -202,7 +204,7 @@ class Agent(Object):
         self.step_function = kwargs.get("step_function", self._default_step)
 
     def copy(self):
-        new_agent = self.__class__(self.node, self.colour)
+        new_agent = self.__class__(self.node, self.color)
         new_agent.orientation = self.orientation
         new_agent.action_space_size = self.action_space_size
         new_agent.angle_increment = self.angle_increment
@@ -221,17 +223,17 @@ class Agent(Object):
         self.node = self.step_function(graph, self.node, action)
 
     def draw(self, window: Window, visibility: float = 1.0):
-        colour = list(self.colour)
-        colour[3] = int(visibility * 255)
-        border_colour = list(Colours.black)
-        border_colour[3] = int(visibility * 255)
+        color = list(self.color)
+        color[3] = int(visibility * 255)
+        border_color = list(Colors.black)
+        border_color[3] = int(visibility * 255)
         if self.angle_increment is None:
             window.draw_circle(
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
                 radius=0.5,
-                colour=colour,
+                color=color,
                 border_width=1,
-                border_colour=border_colour,
+                border_color=border_color,
                 use_transparency=True,
             )
         else:
@@ -239,8 +241,8 @@ class Agent(Object):
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
                 size=0.8,
                 orientation=self.orientation * self.angle_increment,
-                colour=colour,
+                color=color,
                 border_width=1,
-                border_colour=border_colour,
+                border_color=border_color,
                 use_transparency=True,
             )

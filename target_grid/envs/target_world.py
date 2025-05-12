@@ -19,11 +19,15 @@ from .constants import (
 )
 from .graphs import GridGraph
 from .objects import Wall, Goal, Target, Agent, Hazard, Actions
-from .window import Colours, Window
+from .window import Colors, Window
 
 
 DEFAULT_WORLD_PARAMETERS = {
     "grid_data": None,
+    "feature_data": None,
+    "color_map": None,
+    "edge_probability": 1.0,
+    "hazard_data": None,
     "agent_start_pos": None,
     "agent_start_dir": None,
     "goal_pos": None,
@@ -54,6 +58,18 @@ class TargetWorldEnv(gym.Env):
         if world_parameters is not None:
             self.grid_data = world_parameters.get(
                 "grid_data", DEFAULT_WORLD_PARAMETERS["grid_data"]
+            )
+            self.feature_data = world_parameters.get(
+                "feature_data", DEFAULT_WORLD_PARAMETERS["feature_data"]
+            )
+            self.color_map = world_parameters.get(
+                "color_map", DEFAULT_WORLD_PARAMETERS["color_map"]
+            )
+            self.edge_probability = world_parameters.get(
+                "edge_probability", DEFAULT_WORLD_PARAMETERS["edge_probability"]
+            )
+            self.hazard_data = world_parameters.get(
+                "hazard_data", DEFAULT_WORLD_PARAMETERS["hazard_data"]
             )
             self.agent_start_pos = world_parameters.get(
                 "agent_start_pos", DEFAULT_WORLD_PARAMETERS["agent_start_pos"]
@@ -91,6 +107,10 @@ class TargetWorldEnv(gym.Env):
             )
         else:
             self.grid_data = DEFAULT_WORLD_PARAMETERS["grid_data"]
+            self.feature_data = DEFAULT_WORLD_PARAMETERS["feature_data"]
+            self.feature_data = DEFAULT_WORLD_PARAMETERS["color_map"]
+            self.edge_probability = DEFAULT_WORLD_PARAMETERS["edge_probability"]
+            self.grid_data = DEFAULT_WORLD_PARAMETERS["hazard_data"]
             self.agent_start_pos = DEFAULT_WORLD_PARAMETERS["agent_start_pos"]
             self.agent_start_dir = DEFAULT_WORLD_PARAMETERS["agent_start_dir"]
             self.goal_pos = DEFAULT_WORLD_PARAMETERS["goal_pos"]
@@ -103,6 +123,13 @@ class TargetWorldEnv(gym.Env):
             self.max_steps = DEFAULT_MAX_STEP
             self.screen_width = DEFAULT_SCREEN_WIDTH
             self.screen_height = DEFAULT_SCREEN_HEIGHT
+
+        assert self.grid_data is None or (
+            np.max(self.grid_data) <= 1 and np.min(self.grid_data) >= 0
+        )
+        assert self.hazard_data is None or (
+            np.max(self.hazard_data) <= 1 and np.min(self.hazard_data) >= 0
+        )
 
         if seed is not None:
             self.seed = seed
@@ -140,24 +167,14 @@ class TargetWorldEnv(gym.Env):
         self.targets = []
         self.objects = []
 
-        # Create an empty grid, with only walls and empty (0,1) for the graph
-        # connectivity
+        # Create an empty grid for the graph connectivity
         if self.grid_data is None:
             self.grid_data = np.zeros((self.size, self.size), dtype=int)
-            for i in range(self.size):
-                attempts = 0
-                while True:
-                    x, y = self.rng.integers(0, self.size, size=2)
-                    if self.grid_data[y, x] == 0:
-                        break
-                    attempts += 1
-                    if attempts >= self.max_retry:
-                        raise ValueError("Could not place the wall after 10 attempts")
-                self.grid_data[y, x] = 1
-            graph_data = self.grid_data
-        else:
-            graph_data = np.where(self.grid_data == 2, 1, 0)
-        self.graph = GridGraph(edge_probability=1.0, grid_data=graph_data, seed=seed)
+        self.graph = GridGraph(
+            edge_probability=self.edge_probability,
+            grid_data=self.grid_data,
+            seed=self.seed,
+        )
 
         self.window = None
         self.clock = None
@@ -184,9 +201,7 @@ class TargetWorldEnv(gym.Env):
         if self.grid_data is None:
             visibility = np.ones((self.size, self.size))
         else:
-            occlusions = np.where(self.grid_data == 2, 1, 0)
-
-            height, width = occlusions.shape
+            height, width = self.grid_data.shape
             ends = np.array(
                 [[i, j] for j in range(height) for i in range(width)]
             )  # + 0.5
@@ -198,16 +213,9 @@ class TargetWorldEnv(gym.Env):
                 )
                 # + 0.5
             )
-            # visibility = visibility_from_real_region(
-            #     data=occlusions,
-            #     origin=(0, 0),
-            #     resolution=1.0,
-            #     starts=start,
-            #     ends=ends,
-            # ).reshape(height, width)
             # Bresenham's line algorithm (integer based)
             visibility = visibility_from_region(
-                data=occlusions, starts=start, ends=ends
+                data=self.grid_data, starts=start, ends=ends
             ).reshape(height, width)
         self.visibility_cache[x] = visibility
         return visibility
@@ -216,15 +224,15 @@ class TargetWorldEnv(gym.Env):
         return self.graph
 
     def add_wall(self, pos):
-        self.grid_data[pos(1), pos(0)] = 2
-        self.objects.append(Wall(node=pos, colour=Colours.grey))
+        self.grid_data[pos(1), pos(0)] = 1
+        self.objects.append(Wall(node=pos, color=Colors.grey))
 
     def add_hazard(self, pos):
-        self.grid_data[pos(1), pos(0)] = 1
-        self.objects.append(Hazard(node=pos, colour=Colours.red))
+        self.hazard_data[pos(1), pos(0)] = 1
+        self.objects.append(Hazard(node=pos, color=Colors.red))
 
     def add_goal(self, pos):
-        self.goals.append(Goal(node=pos, colour=Colours.green))
+        self.goals.append(Goal(node=pos, color=Colors.green))
 
     def set_target_move_prob(self, move_prob):
         self.target_move_prob = move_prob
@@ -268,14 +276,14 @@ class TargetWorldEnv(gym.Env):
                     raise ValueError("Could not place the target after 10 attempts")
             target = Target(
                 node=(x, y),
-                colour=Colours.red,
+                color=Colors.red,
                 rng=self.rng,
                 move_prob=move_prob,
             )
         else:
             target = Target(
                 node=None,
-                colour=Colours.red,
+                color=Colors.red,
                 rng=self.rng,
                 move_prob=move_prob,
             )
@@ -352,11 +360,14 @@ class TargetWorldEnv(gym.Env):
         self.objects = []
         obs = list(zip(*self.grid_data.nonzero()))
         for y, x in obs:
-            if self.grid_data[y, x] == 2:
-                wall = Wall(node=(x, y), colour=Colours.grey)
-                self.objects.append(wall)
-            elif self.grid_data[y, x] == 1:
-                hazard = Hazard(node=(x, y), colour=Colours.red)
+            wall = Wall(node=(x, y), color=Colors.grey)
+            self.objects.append(wall)
+
+        # and the hazards...
+        if self.hazard_data is not None:
+            obs = list(zip(*self.hazard_data.nonzero()))
+            for y, x in obs:
+                hazard = Hazard(node=(x, y), color=Colors.red)
                 self.objects.append(hazard)
 
         # Place the agent
@@ -374,7 +385,7 @@ class TargetWorldEnv(gym.Env):
                 node=agent_node,
                 orientation=agent_orientation,
                 action_space_size=Actions.action_space_size.value,
-                colour=Colours.blue,
+                color=Colors.blue,
             )
 
         # Place the goal
@@ -382,26 +393,9 @@ class TargetWorldEnv(gym.Env):
         if self.goal_pos is not None:
             if isinstance(self.goal_pos, list):
                 for goal_pos in self.goal_pos:
-                    self.goals.append(Goal(node=tuple(goal_pos), colour=Colours.green))
+                    self.goals.append(Goal(node=tuple(goal_pos), color=Colors.green))
             else:
-                self.goals.append(Goal(node=tuple(self.goal_pos), colour=Colours.green))
-        # else:
-        #     attempts = 0
-        #     while True:
-        #         x, y = self.rng.integers(
-        #             0,
-        #             self.size,
-        #             [
-        #                 2,
-        #             ],
-        #             dtype=int,
-        #         )
-        #         if self.grid_data[y, x] == 0 and self.agent.node != (x, y):
-        #             break
-        #         attempts += 1
-        #         if attempts >= self.max_retry:
-        #             raise ValueError("Could not place the goal after 10 attempts")
-        #     self.goals.append(Goal(node=(x, y), colour=Colours.green))
+                self.goals.append(Goal(node=tuple(self.goal_pos), color=Colors.green))
 
         # Update the distances to the goal(s) for all nodes
         if len(self.goals):
@@ -506,7 +500,12 @@ class TargetWorldEnv(gym.Env):
             )
 
         self.window.clear()
-        self.graph.draw(self.window, self.current_visibility)
+        self.graph.draw(
+            self.window,
+            self.current_visibility,
+            feature_data=self.feature_data,
+            color_map=self.color_map,
+        )
 
         for obj in self.objects:
             obj.draw(self.window, self.current_visibility[obj.node[1], obj.node[0]])

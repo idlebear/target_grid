@@ -5,7 +5,7 @@ from math import sqrt
 from .util import DotDict
 
 
-Colours = DotDict(
+Colors = DotDict(
     {
         "black": (0, 0, 0, 255),
         "white": (255, 255, 255, 255),
@@ -26,9 +26,9 @@ Colours = DotDict(
     }
 )
 
-SCREEN_OUTLINE_COLOUR = Colours.black
-SCREEN_BACKGROUND_COLOUR = Colours.white
-STATUS_FONT_COLOUR = Colours.blue
+SCREEN_OUTLINE_COLOR = Colors.black
+SCREEN_BACKGROUND_COLOR = Colors.white
+STATUS_FONT_COLOR = Colors.blue
 STATUS_FONT_SIZE = 32
 
 
@@ -91,18 +91,18 @@ class Window:
             pygame.display.init()
 
     def clear(self):
-        self.screen.fill(SCREEN_BACKGROUND_COLOUR)
+        self.screen.fill(SCREEN_BACKGROUND_COLOR)
 
     def get_drawing_scale(self):
         return self.scale
 
-    def draw_polyline(self, points, colour, width=2, use_transparency=False):
+    def draw_polyline(self, points, color, width=2, use_transparency=False):
         start = points[0]
         for end in points[1:]:
-            self.draw_line(start, end, colour, width, use_transparency)
+            self.draw_line(start, end, color, width, use_transparency)
             start = end
 
-    def draw_line(self, start, end, colour, width=2, use_transparency=False):
+    def draw_line(self, start, end, color, width=2, use_transparency=False):
         sx = self.xmargin + int((start[0] - self.origin[0]) * self.scale)
         sy = self.ymargin + int((start[1] - self.origin[1]) * self.scale)
         ex = self.xmargin + int((end[0] - self.origin[0]) * self.scale)
@@ -115,13 +115,13 @@ class Window:
             draw_screen = self.screen
 
         pygame.draw.line(
-            draw_screen, color=colour, start_pos=(sx, sy), end_pos=(ex, ey), width=width
+            draw_screen, color=color, start_pos=(sx, sy), end_pos=(ex, ey), width=width
         )
 
         if use_transparency:
             self.screen.blit(self.tmp_screen, (0, 0))
 
-    def draw_circle(self, center, colour, radius=2, use_transparency=False):
+    def draw_circle(self, center, color, radius=2, use_transparency=False):
         if use_transparency:
             self.tmp_screen.fill((0, 0, 0, 0))
             draw_screen = self.tmp_screen
@@ -132,7 +132,7 @@ class Window:
         cy = self.ymargin + int((center[1] - self.origin[1]) * self.scale)
         radius = int(radius * self.scale)
 
-        pygame.draw.circle(draw_screen, color=colour, center=(cx, cy), radius=radius)
+        pygame.draw.circle(draw_screen, color=color, center=(cx, cy), radius=radius)
         if use_transparency:
             self.screen.blit(self.tmp_screen, (0, 0))
 
@@ -141,9 +141,9 @@ class Window:
         center,
         height,
         width=None,
-        colour=Colours.pink,
+        color=None,
         border_width=0,
-        border_colour=None,
+        border_color=None,
         use_transparency=False,
     ):
         if width is None:
@@ -155,25 +155,26 @@ class Window:
         else:
             draw_screen = self.screen
 
-        pygame.draw.rect(
-            draw_screen,
-            color=colour,
-            rect=(
-                self.xmargin
-                + int((center[0] - width / 2.0 - self.origin[0]) * self.scale),
-                self.ymargin
-                + int((center[1] - height / 2.0 - self.origin[1]) * self.scale),
-                int(width * self.scale),
-                int(height * self.scale),
-            ),
-        )
-
-        if border_width > 0:
-            if border_colour is None:
-                border_colour = Colours.black
+        if color is not None:
             pygame.draw.rect(
                 draw_screen,
-                color=border_colour,
+                color=color,
+                rect=(
+                    self.xmargin
+                    + int((center[0] - width / 2.0 - self.origin[0]) * self.scale),
+                    self.ymargin
+                    + int((center[1] - height / 2.0 - self.origin[1]) * self.scale),
+                    int(width * self.scale),
+                    int(height * self.scale),
+                ),
+            )
+
+        if border_width > 0:
+            if border_color is None:
+                border_color = Colors.black
+            pygame.draw.rect(
+                draw_screen,
+                color=border_color,
                 rect=(
                     self.xmargin
                     + int((center[0] - width / 2.0 - self.origin[0]) * self.scale),
@@ -193,9 +194,9 @@ class Window:
         center,
         size,
         orientation,
-        colour,
+        color,
         border_width=0,
-        border_colour=None,
+        border_color=None,
         use_transparency=False,
     ):
         # points = [
@@ -222,19 +223,19 @@ class Window:
         ]
         points = [(x + center[0], y + center[1]) for x, y in points]
         self.draw_polygon(
-            fill_colour=colour,
+            fill_color=color,
             points=points,
             border_width=border_width,
-            border_colour=border_colour,
+            border_color=border_color,
             use_transparency=use_transparency,
         )
 
     def draw_polygon(
         self,
-        fill_colour,
+        fill_color,
         points,
         border_width=2,
-        border_colour=Colours.black,
+        border_color=Colors.black,
         use_transparency=False,
     ):
         points = [
@@ -245,23 +246,23 @@ class Window:
             for x, y in points
         ]
 
-        if border_colour is None:
-            border_colour = Colours.black
+        if border_color is None:
+            border_color = Colors.black
         if use_transparency:
             self.tmp_screen.fill((0, 0, 0, 0))
-            if fill_colour is not None:
-                pygame.draw.polygon(self.tmp_screen, fill_colour, points, 0)
+            if fill_color is not None:
+                pygame.draw.polygon(self.tmp_screen, fill_color, points, 0)
             if border_width > 0:
                 pygame.draw.polygon(
-                    self.tmp_screen, border_colour, points, width=border_width
+                    self.tmp_screen, border_color, points, width=border_width
                 )
             self.screen.blit(self.tmp_screen, (0, 0))
         else:
-            if fill_colour is not None:
-                pygame.draw.polygon(self.screen, fill_colour, points, 0)
+            if fill_color is not None:
+                pygame.draw.polygon(self.screen, fill_color, points, 0)
             if border_width > 0:
                 pygame.draw.polygon(
-                    self.screen, border_colour, points, width=border_width
+                    self.screen, border_color, points, width=border_width
                 )
 
     # Quick image rotation
@@ -279,7 +280,7 @@ class Window:
         #  draw the limits of the environment
         pygame.draw.rect(
             self.screen,
-            SCREEN_OUTLINE_COLOUR,
+            SCREEN_OUTLINE_COLOR,
             (
                 self.xmargin - self.border_offset,
                 self.ymargin - self.border_offset,
@@ -300,7 +301,7 @@ class Window:
 
         pygame.draw.rect(
             self.screen,
-            SCREEN_BACKGROUND_COLOUR,
+            SCREEN_BACKGROUND_COLOR,
             (
                 x_avg_offset - STATUS_XMARGIN,
                 y_avg_offset - STATUS_YMARGIN,
@@ -311,7 +312,7 @@ class Window:
         )
         pygame.draw.rect(
             self.screen,
-            SCREEN_OUTLINE_COLOUR,
+            SCREEN_OUTLINE_COLOR,
             (
                 x_avg_offset - STATUS_XMARGIN,
                 y_avg_offset - STATUS_YMARGIN,
@@ -320,12 +321,12 @@ class Window:
             ),
             2,
         )
-        text = self.status_font.render(collisions_str, False, STATUS_FONT_COLOUR)
+        text = self.status_font.render(collisions_str, False, STATUS_FONT_COLOR)
         self.screen.blit(text, (x_avg_offset + STATUS_XMARGIN / 3, y_avg_offset))
 
         pygame.draw.rect(
             self.screen,
-            SCREEN_BACKGROUND_COLOUR,
+            SCREEN_BACKGROUND_COLOR,
             (
                 self.xmargin + STATUS_XMARGIN / 2,
                 self.xmargin + STATUS_YMARGIN,
@@ -335,7 +336,7 @@ class Window:
             0,
         )
 
-        text = self.status_font.render(time_str, False, STATUS_FONT_COLOUR)
+        text = self.status_font.render(time_str, False, STATUS_FONT_COLOR)
         self.screen.blit(
             text, (self.xmargin + STATUS_XMARGIN, self.ymargin + STATUS_YMARGIN)
         )

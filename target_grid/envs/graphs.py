@@ -8,7 +8,7 @@ Shortest Paths
 import networkx as nx
 import numpy as np
 
-from .window import Colours
+from .window import Colors
 from .actions import node_to_action
 
 
@@ -92,6 +92,31 @@ class Graph:
         int: The shortest path distance between the two nodes.
         """
         return nx.shortest_path_length(self.G, source=start, target=goal)
+
+    def is_connected(self):
+        """
+        Check if the graph is connected.
+        This function checks if the graph is connected using NetworkX's is_connected
+        function.
+        Returns:
+        bool: True if the graph is connected, False otherwise.
+        """
+        return nx.is_connected(self.G)
+
+    def try_obstacle(self, node):
+        """
+        Attempt to place an obstacle at the given node.  If the graph remains connected
+        return True, otherwise return False
+        """
+        # disconnect all edges from this node
+        edges = list(self.G.edges(node))
+        self.G.remove_node(node)
+        if not nx.is_connected(self.G):
+            self.G.add_node(node)
+            for edge in edges:
+                self.G.add_edge(*edge)
+            return False
+        return True
 
     def create_markov_transition_matrix(self):
         """
@@ -281,26 +306,34 @@ class GridGraph(Graph):
         self.min_position = np.min(list(self.node_positions.values()), axis=0)
         self.max_position = np.max(list(self.node_positions.values()), axis=0)
 
-    def draw(self, window, current_visibility):
+    def draw(self, window, current_visibility, feature_data=None, color_map=None):
         """
         Draw the graph on the window object (using Window.py)
         """
+        if feature_data is not None:
+            assert isinstance(
+                color_map, dict
+            ), "Color map must be a dictionary if feature data is provided"
 
         for node in self.G.nodes:
             x, y = node[0] + 0.5, node[1] + 0.5
 
             # set the hue based on the node visibility
-            colour = np.array(Colours.light_blue) * current_visibility[
-                node[1], node[0]
-            ] + (1 - current_visibility[node[1], node[0]]) * np.array(
-                Colours.light_grey
-            )
+            if feature_data is not None:
+                color = np.array(
+                    color_map.get(feature_data[node[1], node[0]], Colors.light_blue)
+                )
+            else:
+                color = np.array(Colors.light_blue)
+            color = color * current_visibility[node[1], node[0]] + (
+                1 - current_visibility[node[1], node[0]]
+            ) * np.array(Colors.light_grey)
             window.draw_rect(
                 center=(x, y),
                 height=1,
                 width=1,
-                colour=colour,
-                border_colour=Colours.black,
+                color=color,
+                border_color=Colors.black,
                 border_width=1,
             )
 
@@ -340,7 +373,7 @@ class UndirectedGraph(Graph):
         for node in self.G.nodes:
             pos = self.G.nodes[node]["pos"]
             label = self.G.nodes[node]["labels"]
-            window.draw_circle(center=pos, colour=Colours.light_blue, radius=0.1)
+            window.draw_circle(center=pos, color=Colors.light_blue, radius=0.1)
             window.draw_text(pos, label)
 
         super().draw(window)
