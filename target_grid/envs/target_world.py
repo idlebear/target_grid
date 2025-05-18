@@ -35,6 +35,7 @@ DEFAULT_WORLD_PARAMETERS = {
     "terminal_cost": DEFAULT_TERMINAL_COST,
     "step_cost": DEFAULT_STEP_COST,
     "num_targets": 0,
+    "target_seeds": None,
     "target_move_prob": None,
     "agent": None,
     "max_steps": DEFAULT_MAX_STEP,
@@ -92,6 +93,9 @@ class TargetWorldEnv(gym.Env):
             self.num_targets = world_parameters.get(
                 "num_targets", DEFAULT_WORLD_PARAMETERS["num_targets"]
             )
+            self.target_seeds = world_parameters.get(
+                "target_seeds", DEFAULT_WORLD_PARAMETERS["target_seeds"]
+            )
             self.target_move_prob = world_parameters.get(
                 "target_move_prob", DEFAULT_WORLD_PARAMETERS["target_move_prob"]
             )
@@ -118,6 +122,7 @@ class TargetWorldEnv(gym.Env):
             self.terminal_cost = DEFAULT_WORLD_PARAMETERS["terminal_cost"]
             self.step_cost = DEFAULT_WORLD_PARAMETERS["step_cost"]
             self.num_targets = DEFAULT_WORLD_PARAMETERS["num_targets"]
+            self.target_seeds = DEFAULT_WORLD_PARAMETERS["target_seeds"]
             self.target_move_prob = DEFAULT_WORLD_PARAMETERS["target_move_prob"]
             self.agent = DEFAULT_WORLD_PARAMETERS["agent"]
             self.max_steps = DEFAULT_MAX_STEP
@@ -256,7 +261,7 @@ class TargetWorldEnv(gym.Env):
 
         return (x, y), self.rng.integers(0, Actions.action_space_size.value)
 
-    def place_target(self, pos=None, move_prob=None):
+    def place_target(self, pos=None, move_prob=None, seed=None):
         if move_prob is None:
             move_prob = self.target_move_prob
         if pos is None:
@@ -277,14 +282,14 @@ class TargetWorldEnv(gym.Env):
             target = Target(
                 node=(x, y),
                 color=Colors.red,
-                rng=self.rng,
+                seed=seed,
                 move_prob=move_prob,
             )
         else:
             target = Target(
-                node=None,
+                node=pos,
                 color=Colors.red,
-                rng=self.rng,
+                seed=seed,
                 move_prob=move_prob,
             )
         return target
@@ -351,7 +356,7 @@ class TargetWorldEnv(gym.Env):
             distances[goal] = self.graph.get_distance(self.agent.node, goal.node)
         return {"distance": distances}
 
-    def reset(self, options=None):
+    def reset(self, options=None, restore_initial_state=False):
         self.steps = 0
         self.terminated = False
 
@@ -412,12 +417,21 @@ class TargetWorldEnv(gym.Env):
         else:
             self.distance_grid = np.zeros((self.size, self.size))
 
-        # We will sample the target's location randomly until it does not
-        # coincide with the agent's location, or any of the walls, or the goal
-        self.targets = []
-        for _ in range(self.num_targets):
-            target = self.place_target()
-            self.targets.append(target)
+        if restore_initial_state and len(self.targets):
+            for target in self.targets:
+                target.reset()
+        else:
+            if self.target_seeds is None:
+                target_seeds = self.rng.integers(1000000, size=self.num_targets)
+            else:
+                target_seeds = self.target_seeds
+
+            # We will sample the target's location randomly until it does not
+            # coincide with the agent's location, or any of the walls, or the goal
+            self.targets = []
+            for target_index in range(self.num_targets):
+                target = self.place_target(seed=target_seeds[target_index])
+                self.targets.append(target)
 
         # reset the frame counter
         self.reset_count += 1

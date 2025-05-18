@@ -17,6 +17,9 @@ class Object:
         if len(self.color) != 4:
             self.color = tuple(list(self.color)[:3] + [255])
 
+    def reset(self):
+        pass
+
     def step(self, graph: GridGraph, action: int):
         raise NotImplementedError
 
@@ -137,8 +140,18 @@ class Target(Object):
             self.angle_increment = np.pi * 2.0 / self.action_space_size
         else:
             self.angle_increment = None
-        self.rng = kwargs.get("rng", np.random.default_rng())
+
+        self.seed = kwargs.get("seed", None)
+        self.rng = np.random.default_rng(self.seed)
+
+        self.initial_node = self.node
+        self.initial_orientation = self.orientation
         self.move_prob = kwargs.get("move_prob", None)
+
+    def reset(self):
+        self.node = self.initial_node
+        self.orientation = self.initial_orientation
+        self.rng = np.random.default_rng(self.seed)
 
     def copy(self):
         new_target = self.__class__(self.node, self.color)
