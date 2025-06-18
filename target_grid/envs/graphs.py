@@ -341,6 +341,22 @@ class GridGraph(Graph):
         """Use bellman-ford to get the shortest path from the node to all other nodes"""
         return nx.single_source_bellman_ford_path_length(self.G, node)
 
+    def get_graph(self):
+        return self.G
+
+    def neighbours(self, node):
+        """
+        Get the neighbours of a node in the graph
+        """
+        grid_out = True
+        if type(node) is int:
+            node = self.grid_index(node)
+            grid_out = False
+        neighbours = list(self.G.neighbors(node))
+        if not grid_out:
+            neighbours = [self.linear_index(n) for n in neighbours]
+        return neighbours
+
 
 class UndirectedGraph(Graph):
     def __init__(
@@ -377,3 +393,6 @@ class UndirectedGraph(Graph):
             window.draw_text(pos, label)
 
         super().draw(window)
+
+    def get_graph(self):
+        return self.G

@@ -11,7 +11,7 @@ from .window import Window, Colors
 
 class Object:
     def __init__(self, node, color, **kwargs):
-        self.node = node
+        self.node = tuple(node)
         self.color = color
         # Ensure the color has an alpha channel
         if len(self.color) != 4:
@@ -148,9 +148,11 @@ class Target(Object):
         self.initial_orientation = self.orientation
         self.move_prob = kwargs.get("move_prob", None)
 
-    def reset(self):
+    def reset(self, seed=None):
         self.node = self.initial_node
         self.orientation = self.initial_orientation
+        if seed is not None:
+            self.seed = seed
         self.rng = np.random.default_rng(self.seed)
 
     def copy(self):

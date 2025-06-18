@@ -35,6 +35,7 @@ DEFAULT_WORLD_PARAMETERS = {
     "terminal_cost": DEFAULT_TERMINAL_COST,
     "step_cost": DEFAULT_STEP_COST,
     "num_targets": 0,
+    "target_starts": None,
     "target_seeds": None,
     "target_move_prob": None,
     "agent": None,
@@ -45,7 +46,7 @@ DEFAULT_WORLD_PARAMETERS = {
 
 
 class TargetWorldEnv(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array", "file"], "render_fps": 4}
+    metadata = {"render_modes": ["human", "rgb_array", "file"], "render_fps": 5}
 
     def __init__(
         self,
@@ -56,78 +57,30 @@ class TargetWorldEnv(gym.Env):
     ):
         super().__init__()
 
+        # Start with a copy of default parameters
+        params = DEFAULT_WORLD_PARAMETERS.copy()
         if world_parameters is not None:
-            self.grid_data = world_parameters.get(
-                "grid_data", DEFAULT_WORLD_PARAMETERS["grid_data"]
-            )
-            self.feature_data = world_parameters.get(
-                "feature_data", DEFAULT_WORLD_PARAMETERS["feature_data"]
-            )
-            self.color_map = world_parameters.get(
-                "color_map", DEFAULT_WORLD_PARAMETERS["color_map"]
-            )
-            self.edge_probability = world_parameters.get(
-                "edge_probability", DEFAULT_WORLD_PARAMETERS["edge_probability"]
-            )
-            self.hazard_data = world_parameters.get(
-                "hazard_data", DEFAULT_WORLD_PARAMETERS["hazard_data"]
-            )
-            self.agent_start_pos = world_parameters.get(
-                "agent_start_pos", DEFAULT_WORLD_PARAMETERS["agent_start_pos"]
-            )
-            self.agent_start_dir = world_parameters.get(
-                "agent_start_dir", DEFAULT_WORLD_PARAMETERS["agent_start_dir"]
-            )
-            self.goal_pos = world_parameters.get(
-                "goal_pos", DEFAULT_WORLD_PARAMETERS["goal_pos"]
-            )
-            self.hazard_cost = world_parameters.get(
-                "hazard_cost", DEFAULT_WORLD_PARAMETERS["hazard_cost"]
-            )
-            self.terminal_cost = world_parameters.get(
-                "terminal_cost", DEFAULT_WORLD_PARAMETERS["terminal_cost"]
-            )
-            self.step_cost = world_parameters.get(
-                "step_cost", DEFAULT_WORLD_PARAMETERS["step_cost"]
-            )
-            self.num_targets = world_parameters.get(
-                "num_targets", DEFAULT_WORLD_PARAMETERS["num_targets"]
-            )
-            self.target_seeds = world_parameters.get(
-                "target_seeds", DEFAULT_WORLD_PARAMETERS["target_seeds"]
-            )
-            self.target_move_prob = world_parameters.get(
-                "target_move_prob", DEFAULT_WORLD_PARAMETERS["target_move_prob"]
-            )
-            self.agent = world_parameters.get(
-                "agent", DEFAULT_WORLD_PARAMETERS["agent"]
-            )
-            self.max_steps = world_parameters.get("max_steps", DEFAULT_MAX_STEP)
-            self.screen_width = world_parameters.get(
-                "screen_width", DEFAULT_SCREEN_WIDTH
-            )
-            self.screen_height = world_parameters.get(
-                "screen_height", DEFAULT_SCREEN_HEIGHT
-            )
-        else:
-            self.grid_data = DEFAULT_WORLD_PARAMETERS["grid_data"]
-            self.feature_data = DEFAULT_WORLD_PARAMETERS["feature_data"]
-            self.feature_data = DEFAULT_WORLD_PARAMETERS["color_map"]
-            self.edge_probability = DEFAULT_WORLD_PARAMETERS["edge_probability"]
-            self.grid_data = DEFAULT_WORLD_PARAMETERS["hazard_data"]
-            self.agent_start_pos = DEFAULT_WORLD_PARAMETERS["agent_start_pos"]
-            self.agent_start_dir = DEFAULT_WORLD_PARAMETERS["agent_start_dir"]
-            self.goal_pos = DEFAULT_WORLD_PARAMETERS["goal_pos"]
-            self.hazard_cost = DEFAULT_WORLD_PARAMETERS["hazard_cost"]
-            self.terminal_cost = DEFAULT_WORLD_PARAMETERS["terminal_cost"]
-            self.step_cost = DEFAULT_WORLD_PARAMETERS["step_cost"]
-            self.num_targets = DEFAULT_WORLD_PARAMETERS["num_targets"]
-            self.target_seeds = DEFAULT_WORLD_PARAMETERS["target_seeds"]
-            self.target_move_prob = DEFAULT_WORLD_PARAMETERS["target_move_prob"]
-            self.agent = DEFAULT_WORLD_PARAMETERS["agent"]
-            self.max_steps = DEFAULT_MAX_STEP
-            self.screen_width = DEFAULT_SCREEN_WIDTH
-            self.screen_height = DEFAULT_SCREEN_HEIGHT
+            params.update(world_parameters)
+
+        self.grid_data = params["grid_data"]
+        self.feature_data = params["feature_data"]
+        self.color_map = params["color_map"]
+        self.edge_probability = params["edge_probability"]
+        self.hazard_data = params["hazard_data"]
+        self.agent_start_pos = params["agent_start_pos"]
+        self.agent_start_dir = params["agent_start_dir"]
+        self.goal_pos = params["goal_pos"]
+        self.hazard_cost = params["hazard_cost"]
+        self.terminal_cost = params["terminal_cost"]
+        self.step_cost = params["step_cost"]
+        self.num_targets = params["num_targets"]
+        self.target_starts = params["target_starts"]
+        self.target_seeds = params["target_seeds"]
+        self.target_move_prob = params["target_move_prob"]
+        self.agent = params["agent"]
+        self.max_steps = params["max_steps"]
+        self.screen_width = params["screen_width"]
+        self.screen_height = params["screen_height"]
 
         assert self.grid_data is None or (
             np.max(self.grid_data) <= 1 and np.min(self.grid_data) >= 0
@@ -135,31 +88,32 @@ class TargetWorldEnv(gym.Env):
         assert self.hazard_data is None or (
             np.max(self.hazard_data) <= 1 and np.min(self.hazard_data) >= 0
         )
-
-        if seed is not None:
-            self.seed = seed
-            self.rng = np.random.default_rng(seed)
-        else:
-            self.rng = np.random.default_rng()
+        assert self.target_starts is None or len(self.target_starts) == self.num_targets
 
         self.size = size
         self.max_retry = DEFAULT_MAX_RETRY
         self.reset_count = 0
 
-        # observations are a dictionary with keys for agent and target locations,
-        # as well as a grid showing the visible portion of the world
+        self.rng = (
+            np.random.default_rng(seed) if seed is not None else np.random.default_rng()
+        )
+        self.seed = seed
+
         self.observation_space = spaces.Dict(
             {
                 "agent": spaces.Box(low=0, high=self.size - 1, shape=(2,), dtype=int),
-                "target": spaces.Box(low=0, high=self.size - 1, shape=(2,), dtype=int),
+                "targets": spaces.Tuple(
+                    [
+                        spaces.Box(low=0, high=self.size - 1, shape=(2,), dtype=int)
+                        for _ in range(self.num_targets)
+                    ]
+                ),
+                "goal": spaces.Box(low=0, high=self.size - 1, shape=(2,), dtype=int),
                 "grid": spaces.Box(
-                    low=0, high=1, shape=(self.size, self.size), dtype=int
+                    low=0, high=1, shape=(3, self.size, self.size), dtype=float
                 ),
             }
         )
-        # BUGBUG - add the distance to the goal as a wrapper
-
-        # We have 8 actions, corresponding to "north", "northeast", "east" etc.
         self.action_space = spaces.Discrete(Actions.action_space_size.value)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
@@ -167,14 +121,13 @@ class TargetWorldEnv(gym.Env):
         if render_mode == "file":
             os.makedirs("render", exist_ok=True)
 
-        # initialize the environment
         self.goals = []
         self.targets = []
         self.objects = []
 
-        # Create an empty grid for the graph connectivity
         if self.grid_data is None:
             self.grid_data = np.zeros((self.size, self.size), dtype=int)
+
         self.graph = GridGraph(
             edge_probability=self.edge_probability,
             grid_data=self.grid_data,
@@ -183,7 +136,6 @@ class TargetWorldEnv(gym.Env):
 
         self.window = None
         self.clock = None
-
         self.visibility_cache = {}
 
     def _visibility_fn(self, x):
@@ -295,32 +247,23 @@ class TargetWorldEnv(gym.Env):
         return target
 
     def _get_obs(self):
-        # base grid has the following values
-        #   empty
-        #   wall
-        #   hazard
-        #   goal
-        #   occluded
         self.current_visibility = self._visibility_fn(self.agent.node)
+
         obs_data = np.zeros((3, self.size, self.size), dtype=float)
-        obs_data[0, :, :] = self.current_visibility
-        obs_data[0, :, :] *= GridState.OCCLUDED.value
+        obs_data[0, :, :] = self.current_visibility * GridState.OCCLUDED.value
 
         for obj in self.objects:
-            if type(obj) is Hazard:
+            if isinstance(obj, Hazard):
                 obs_data[0, obj.node[1], obj.node[0]] = GridState.HAZARD.value
-            elif type(obj) is Wall:
+            elif isinstance(obj, Wall):
                 obs_data[0, obj.node[1], obj.node[0]] = GridState.WALL.value
         for goal in self.goals:
             obs_data[0, goal.node[1], goal.node[0]] = GridState.GOAL.value
         obs_data[0, :, :] /= GridState.MAX_VALUE.value
 
-        # second grid has location of the agent and the target
-        #   target facing east (along x-axis)
-        #   agent facing east
+        # Target and agent layer
         target_nodes = []
         for target in self.targets:
-            # if the target is visible, set the appropriate value in the grid
             if self.current_visibility[target.node[1], target.node[0]]:
                 obs_data[1, target.node[1], target.node[0]] = (
                     GridState.TARGET.value + target.orientation
@@ -328,6 +271,7 @@ class TargetWorldEnv(gym.Env):
                 target_nodes.append(target.node)
             else:
                 target_nodes.append(None)
+
         if obs_data[1, self.agent.node[1], self.agent.node[0]] != 0:
             obs_data[
                 1, self.agent.node[1], self.agent.node[0]
@@ -338,14 +282,22 @@ class TargetWorldEnv(gym.Env):
             )
         obs_data[1, :, :] /= GridState.MAX_VALUE.value
 
-        # third grid has the distance to the goal
         obs_data[2, :, :] = self.distance_grid
 
-        # make a list of the goal nodes
-        goal_nodes = np.array([goal.node for goal in self.goals]).reshape(-1, 2)
+        goal_nodes = np.array([goal.node for goal in self.goals], dtype=int).reshape(
+            -1, 2
+        )
+
         return {
-            "agent": self.agent.node,
-            "targets": target_nodes,
+            "agent": np.array(self.agent.node, dtype=int),
+            "targets": tuple(
+                (
+                    np.array(t, dtype=int)
+                    if t is not None
+                    else np.array([-1, -1], dtype=int)
+                )
+                for t in target_nodes
+            ),
             "goal": goal_nodes,
             "grid": obs_data,
         }
@@ -359,6 +311,12 @@ class TargetWorldEnv(gym.Env):
     def reset(self, options=None, restore_initial_state=False):
         self.steps = 0
         self.terminated = False
+
+        if options is None:
+            options = {}
+
+        # clear the cache in case of updates
+        self.visibility_cache = {}
 
         # Place the obstacles in the grid by getting the indices of the obstacles in the
         # numpy array
@@ -417,20 +375,33 @@ class TargetWorldEnv(gym.Env):
         else:
             self.distance_grid = np.zeros((self.size, self.size))
 
+        restore_initial_state = options.get("restore_initial_state", False)
         if restore_initial_state and len(self.targets):
-            for target in self.targets:
-                target.reset()
+            target_seeds = options.get("target_seeds", None)
+            for target_idx, target in enumerate(self.targets):
+                if target_seeds is None:
+                    # target will reuse its current seed
+                    seed = None
+                else:
+                    seed = target_seeds[target_idx]
+                target.reset(seed=seed)
         else:
-            if self.target_seeds is None:
-                target_seeds = self.rng.integers(1000000, size=self.num_targets)
-            else:
-                target_seeds = self.target_seeds
+            target_seeds = options.get("target_seeds", None)
+            if target_seeds is None:
+                if self.target_seeds is None:
+                    target_seeds = self.rng.integers(1000000, size=self.num_targets)
+                else:
+                    target_seeds = self.target_seeds
 
             # We will sample the target's location randomly until it does not
             # coincide with the agent's location, or any of the walls, or the goal
             self.targets = []
             for target_index in range(self.num_targets):
-                target = self.place_target(seed=target_seeds[target_index])
+                if self.target_starts is not None:
+                    pos = self.target_starts[target_index]
+                else:
+                    pos = None
+                target = self.place_target(pos=pos, seed=target_seeds[target_index])
                 self.targets.append(target)
 
         # reset the frame counter

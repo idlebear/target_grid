@@ -32,17 +32,20 @@ action_to_direction = {
     Actions.none.value: np.array([0, 0]),
 }
 
-direction_to_action = {
-    (1, 0): Actions.north.value,
-    (1, 1): Actions.north_east.value,
-    (0, 1): Actions.east.value,
-    (-1, 1): Actions.south_east.value,
-    (-1, 0): Actions.south.value,
-    (-1, -1): Actions.south_west.value,
-    (0, -1): Actions.west.value,
-    (1, -1): Actions.north_west.value,
-    (0, 0): Actions.none.value,
-}
+
+def direction_to_action(direction):
+    _direction_to_action = {
+        (1, 0): Actions.north.value,
+        (1, 1): Actions.north_east.value,
+        (0, 1): Actions.east.value,
+        (-1, 1): Actions.south_east.value,
+        (-1, 0): Actions.south.value,
+        (-1, -1): Actions.south_west.value,
+        (0, -1): Actions.west.value,
+        (1, -1): Actions.north_west.value,
+        (0, 0): Actions.none.value,
+    }
+    return _direction_to_action[tuple(direction)]
 
 
 def action_to_node(node, action):
@@ -51,4 +54,8 @@ def action_to_node(node, action):
 
 def node_to_action(src, dst):
     direction = np.subtract(dst, src)
-    return direction_to_action[tuple(direction)]
+    return direction_to_action(tuple(direction))
+
+
+def random_action(rng):
+    return rng.choice(Actions.action_space_size.value)
