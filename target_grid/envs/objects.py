@@ -147,6 +147,7 @@ class Target(Object):
         self.initial_node = self.node
         self.initial_orientation = self.orientation
         self.move_prob = kwargs.get("move_prob", None)
+        self.occluding = kwargs.get("occluding", False)
 
     def reset(self, seed=None):
         self.node = self.initial_node
@@ -162,6 +163,7 @@ class Target(Object):
         new_target.angle_increment = self.angle_increment
         new_target.rng = self.rng
         new_target.move_prob = self.move_prob
+        new_target.occluding = self.occluding
         return new_target
 
     def step(self, graph: GridGraph):
@@ -186,24 +188,38 @@ class Target(Object):
         color[3] = int(visibility * 255)
         border_color = list(Colors.black)
         border_color[3] = int(visibility * 255)
-        if self.angle_increment is None:
-            window.draw_circle(
+
+        if self.occluding:
+            # Draw occluding targets as smaller squares with obstacle-like color
+            obstacle_color = list(Colors.grey)
+            obstacle_color[3] = int(visibility * 255)
+            window.draw_rect(
                 center=(self.node[0] + 0.5, self.node[1] + 0.5),
-                radius=0.5,
-                color=color,
-                border_color=border_color,
+                height=0.8,
+                width=0.8,
+                color=obstacle_color,
                 use_transparency=True,
             )
         else:
-            window.draw_triangle(
-                center=(self.node[0] + 0.5, self.node[1] + 0.5),
-                size=0.75,
-                orientation=self.orientation * self.angle_increment,
-                color=color,
-                border_width=1,
-                border_color=border_color,
-                use_transparency=True,
-            )
+            # Draw normal targets
+            if self.angle_increment is None:
+                window.draw_circle(
+                    center=(self.node[0] + 0.5, self.node[1] + 0.5),
+                    radius=0.5,
+                    color=color,
+                    border_color=border_color,
+                    use_transparency=True,
+                )
+            else:
+                window.draw_triangle(
+                    center=(self.node[0] + 0.5, self.node[1] + 0.5),
+                    size=0.75,
+                    orientation=self.orientation * self.angle_increment,
+                    color=color,
+                    border_width=1,
+                    border_color=border_color,
+                    use_transparency=True,
+                )
 
 
 class Agent(Object):

@@ -148,14 +148,29 @@ class TargetWorldEnv(gym.Env):
         from the first point.
 
         """
-        visibility = self.visibility_cache.get(x)
+        # Create a cache key that includes agent position and occluding target positions
+        occluding_positions = tuple(
+            target.node for target in self.targets if target.occluding
+        )
+        cache_key = (x, occluding_positions)
+
+        visibility = self.visibility_cache.get(cache_key)
         if visibility is not None:
             return visibility
 
         if self.grid_data is None:
+            visibility_grid = np.zeros((self.size, self.size))
+        else:
+            visibility_grid = self.grid_data.copy()
+
+        # Add occluding targets to the temporary grid
+        for pos in occluding_positions:
+            visibility_grid[pos[1], pos[0]] = 1
+
+        if np.all(visibility_grid == 0):
             visibility = np.ones((self.size, self.size))
         else:
-            height, width = self.grid_data.shape
+            height, width = visibility_grid.shape
             ends = np.array(
                 [[i, j] for j in range(height) for i in range(width)]
             )  # + 0.5
@@ -169,9 +184,9 @@ class TargetWorldEnv(gym.Env):
             )
             # Bresenham's line algorithm (integer based)
             visibility = visibility_from_region(
-                data=self.grid_data, starts=start, ends=ends
+                data=visibility_grid, starts=start, ends=ends
             ).reshape(height, width)
-        self.visibility_cache[x] = visibility
+        self.visibility_cache[cache_key] = visibility
         return visibility
 
     def get_graph(self):
@@ -235,6 +250,7 @@ class TargetWorldEnv(gym.Env):
                 self.rng.integers(0, len(self.target_properties))
             ]
         move_prob = target_properties.get("transition_matrix", None)
+        occluding = target_properties.get("occluding", False)
 
         if pos is None:
             target_start = target_properties.get("start_positions", None)
@@ -253,6 +269,7 @@ class TargetWorldEnv(gym.Env):
                 color=Colors.red,
                 seed=seed,
                 move_prob=move_prob,
+                occluding=occluding,
             )
         else:
             target = Target(
@@ -260,6 +277,7 @@ class TargetWorldEnv(gym.Env):
                 color=Colors.red,
                 seed=seed,
                 move_prob=move_prob,
+                occluding=occluding,
             )
         return target
 
