@@ -35,9 +35,8 @@ DEFAULT_WORLD_PARAMETERS = {
     "terminal_cost": DEFAULT_TERMINAL_COST,
     "step_cost": DEFAULT_STEP_COST,
     "num_targets": 0,
-    "target_starts": None,
+    "target_properties": [],
     "target_seeds": None,
-    "target_move_prob": None,
     "agent": None,
     "max_steps": DEFAULT_MAX_STEP,
     "screen_width": DEFAULT_SCREEN_WIDTH,
@@ -74,9 +73,8 @@ class TargetWorldEnv(gym.Env):
         self.terminal_cost = params["terminal_cost"]
         self.step_cost = params["step_cost"]
         self.num_targets = params["num_targets"]
-        self.target_starts = params["target_starts"]
+        self.target_properties = params.get("target_properties", [])
         self.target_seeds = params["target_seeds"]
-        self.target_move_prob = params["target_move_prob"]
         self.agent = params["agent"]
         self.max_steps = params["max_steps"]
         self.screen_width = params["screen_width"]
@@ -88,7 +86,6 @@ class TargetWorldEnv(gym.Env):
         assert self.hazard_data is None or (
             np.max(self.hazard_data) <= 1 and np.min(self.hazard_data) >= 0
         )
-        assert self.target_starts is None or len(self.target_starts) == self.num_targets
 
         self.size = size
         self.max_retry = DEFAULT_MAX_RETRY
@@ -191,8 +188,8 @@ class TargetWorldEnv(gym.Env):
     def add_goal(self, pos):
         self.goals.append(Goal(node=pos, color=Colors.green))
 
-    def set_target_move_prob(self, move_prob):
-        self.target_move_prob = move_prob
+    def set_target_properties(self, target_properties):
+        self.target_properties = target_properties
 
     def place_agent(self):
         # Choose the agent's location uniformly at random
@@ -213,26 +210,46 @@ class TargetWorldEnv(gym.Env):
 
         return (x, y), self.rng.integers(0, Actions.action_space_size.value)
 
-    def place_target(self, pos=None, move_prob=None, seed=None):
-        if move_prob is None:
-            move_prob = self.target_move_prob
-        if pos is None:
-            attempts = 0
-            while True:
-                x, y = self.rng.integers(0, self.size, size=2, dtype=int)
-                if not self.grid_data[y, x]:
-                    on_goal = False
-                    for goal in self.goals:
-                        if (x, y) == goal.node:
-                            on_goal = True
-                            break
-                    if not on_goal and (x, y) != self.agent.node:
+    def _get_random_target_start(self):
+        attempts = 0
+        while True:
+            x, y = self.rng.integers(0, self.size, size=2, dtype=int)
+            if not self.grid_data[y, x]:
+                on_goal = False
+                for goal in self.goals:
+                    if (x, y) == goal.node:
+                        on_goal = True
                         break
-                attempts += 1
-                if attempts >= self.max_retry:
-                    raise ValueError("Could not place the target after 10 attempts")
+                if not on_goal and (x, y) != self.agent.node:
+                    break
+            attempts += 1
+            if attempts >= self.max_retry:
+                raise ValueError("Could not place the target after 10 attempts")
+        return (x, y)
+
+    def place_target(self, property_index=None, pos=None, seed=None):
+        if property_index is not None:
+            target_properties = self.target_properties[property_index]
+        else:
+            target_properties = self.target_properties[
+                self.rng.integers(0, len(self.target_properties))
+            ]
+        move_prob = target_properties.get("transition_matrix", None)
+
+        if pos is None:
+            target_start = target_properties.get("start_positions", None)
+            if target_start is not None:
+                if isinstance(target_start, list):
+                    # Randomly select one of the target starts
+                    pos_idx = self.rng.integers(0, len(target_start))
+                    pos = target_start[pos_idx]
+                else:
+                    pos = target_properties["target_start"]
+            else:
+                pos = self._get_random_target_start()
+
             target = Target(
-                node=(x, y),
+                node=pos,
                 color=Colors.red,
                 seed=seed,
                 move_prob=move_prob,
@@ -308,7 +325,7 @@ class TargetWorldEnv(gym.Env):
             distances[goal] = self.graph.get_distance(self.agent.node, goal.node)
         return {"distance": distances}
 
-    def reset(self, options=None, restore_initial_state=False):
+    def reset(self, options=None):
         self.steps = 0
         self.terminated = False
 
@@ -376,6 +393,7 @@ class TargetWorldEnv(gym.Env):
             self.distance_grid = np.zeros((self.size, self.size))
 
         restore_initial_state = options.get("restore_initial_state", False)
+        target_property_indices = options.get("target_property_indices", None)
         if restore_initial_state and len(self.targets):
             target_seeds = options.get("target_seeds", None)
             for target_idx, target in enumerate(self.targets):
@@ -397,11 +415,14 @@ class TargetWorldEnv(gym.Env):
             # coincide with the agent's location, or any of the walls, or the goal
             self.targets = []
             for target_index in range(self.num_targets):
-                if self.target_starts is not None:
-                    pos = self.target_starts[target_index]
+                if target_property_indices:
+                    target_property_index = target_property_indices[target_index]
                 else:
-                    pos = None
-                target = self.place_target(pos=pos, seed=target_seeds[target_index])
+                    target_property_index = 0  # Default to the first property
+                target = self.place_target(
+                    seed=target_seeds[target_index],
+                    property_index=target_property_index,
+                )
                 self.targets.append(target)
 
         # reset the frame counter

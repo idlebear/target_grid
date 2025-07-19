@@ -91,7 +91,16 @@ class Graph:
         Returns:
         int: The shortest path distance between the two nodes.
         """
-        return nx.shortest_path_length(self.G, source=start, target=goal)
+        try:
+            distance = nx.shortest_path_length(self.G, source=start, target=goal)
+        except nx.NetworkXNoPath:
+            # If there is no path, return infinity
+            distance = float("inf")
+        except nx.NodeNotFound:
+            # If either node is not found, return infinity
+            distance = float("inf")
+
+        return distance
 
     def is_connected(self):
         """
