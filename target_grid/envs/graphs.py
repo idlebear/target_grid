@@ -254,6 +254,15 @@ class Graph:
             shuffle = generator.shuffle
             remove_edge = generator.random
 
+        # disconnect any nodes where the cell is occupied in the grid
+        for node in G.nodes:
+            x, y = node
+            if grid[y, x]:
+                # disconnect all edges from this node
+                edges = list(G.edges(node))
+                for edge in edges:
+                    G.remove_edge(*edge)
+
         # Remove edges randomly while ensuring the graph remains connected
         if edge_probability < 1:
             edges = list(G.edges)
@@ -263,15 +272,6 @@ class Graph:
                     G.remove_edge(*edge)
                     if not nx.is_connected(G):
                         G.add_edge(*edge)
-
-        # disconnect any nodes where the cell is occupied in the grid
-        for node in G.nodes:
-            x, y = node
-            if grid[y, x]:
-                # disconnect all edges from this node
-                edges = list(G.edges(node))
-                for edge in edges:
-                    G.remove_edge(*edge)
 
         return G
 
