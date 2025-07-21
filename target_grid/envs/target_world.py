@@ -34,8 +34,8 @@ DEFAULT_WORLD_PARAMETERS = {
     "hazard_cost": DEFAULT_HAZARD_COST,
     "terminal_cost": DEFAULT_TERMINAL_COST,
     "step_cost": DEFAULT_STEP_COST,
-    "num_targets": 0,
-    "target_properties": [],
+    "target_names": [],
+    "target_properties": {},
     "target_seeds": None,
     "agent": None,
     "max_steps": DEFAULT_MAX_STEP,
@@ -72,9 +72,8 @@ class TargetWorldEnv(gym.Env):
         self.hazard_cost = params["hazard_cost"]
         self.terminal_cost = params["terminal_cost"]
         self.step_cost = params["step_cost"]
-        self.num_targets = params["num_targets"]
-        self.target_properties = params.get("target_properties", [])
-        self.target_seeds = params["target_seeds"]
+        self.target_names = params["target_names"]
+        self.target_properties = params.get("target_properties", {})
         self.agent = params["agent"]
         self.max_steps = params["max_steps"]
         self.screen_width = params["screen_width"]
@@ -102,7 +101,7 @@ class TargetWorldEnv(gym.Env):
                 "targets": spaces.Tuple(
                     [
                         spaces.Box(low=0, high=self.size - 1, shape=(2,), dtype=int)
-                        for _ in range(self.num_targets)
+                        for _ in self.target_names
                     ]
                 ),
                 "goal": spaces.Box(low=0, high=self.size - 1, shape=(2,), dtype=int),
@@ -242,15 +241,18 @@ class TargetWorldEnv(gym.Env):
                 raise ValueError("Could not place the target after 10 attempts")
         return (x, y)
 
-    def place_target(self, property_index=None, pos=None, seed=None):
-        if property_index is not None:
-            target_properties = self.target_properties[property_index]
+    def place_target(self, name=None, pos=None, seed=None):
+        if name is not None:
+            target_properties = self.target_properties[name]
         else:
             target_properties = self.target_properties[
-                self.rng.integers(0, len(self.target_properties))
+                self.rng.choice(list(self.target_properties.keys()))
             ]
         move_prob = target_properties.get("transition_matrix", None)
         occluding = target_properties.get("occluding", False)
+        motion_type = target_properties.get("motion_type", "random")
+        if seed is None:
+            seed = target_properties.get("seed", None)
 
         if pos is None:
             target_start = target_properties.get("start_positions", None)
@@ -266,18 +268,22 @@ class TargetWorldEnv(gym.Env):
 
             target = Target(
                 node=pos,
-                color=Colors.red,
+                color=target_properties.get("color", Colors.red),
                 seed=seed,
                 move_prob=move_prob,
                 occluding=occluding,
+                target_class=name,
+                motion_type=motion_type,
             )
         else:
             target = Target(
                 node=pos,
-                color=Colors.red,
+                color=target_properties.get("color", Colors.red),
                 seed=seed,
                 move_prob=move_prob,
                 occluding=occluding,
+                target_class=name,
+                motion_type=motion_type,
             )
         return target
 
@@ -410,8 +416,13 @@ class TargetWorldEnv(gym.Env):
         else:
             self.distance_grid = np.zeros((self.size, self.size))
 
-        restore_initial_state = options.get("restore_initial_state", False)
-        target_property_indices = options.get("target_property_indices", None)
+        target_names = options.get("target_names", None)
+        if target_names is not None:
+            self.target_names = target_names
+            restore_initial_state = False
+        else:
+            self.target_names = self.target_properties.keys()
+            restore_initial_state = options.get("restore_initial_state", False)
         if restore_initial_state and len(self.targets):
             target_seeds = options.get("target_seeds", None)
             for target_idx, target in enumerate(self.targets):
@@ -419,27 +430,29 @@ class TargetWorldEnv(gym.Env):
                     # target will reuse its current seed
                     seed = None
                 else:
-                    seed = target_seeds[target_idx]
+                    if isinstance(target_seeds, list) or isinstance(
+                        target_seeds, np.ndarray
+                    ):
+                        seed = target_seeds[target_idx]
+                    else:
+                        seed = int(target_seeds)
                 target.reset(seed=seed)
         else:
             target_seeds = options.get("target_seeds", None)
-            if target_seeds is None:
-                if self.target_seeds is None:
-                    target_seeds = self.rng.integers(1000000, size=self.num_targets)
-                else:
-                    target_seeds = self.target_seeds
 
-            # We will sample the target's location randomly until it does not
-            # coincide with the agent's location, or any of the walls, or the goal
             self.targets = []
-            for target_index in range(self.num_targets):
-                if target_property_indices:
-                    target_property_index = target_property_indices[target_index]
+            for target_idx, target_name in enumerate(self.target_names):
+                if target_seeds is None:
+                    seed = None
                 else:
-                    target_property_index = 0  # Default to the first property
+                    seed = (
+                        target_seeds[target_idx]
+                        if target_idx < len(target_seeds)
+                        else None
+                    )
                 target = self.place_target(
-                    seed=target_seeds[target_index],
-                    property_index=target_property_index,
+                    name=target_name,
+                    seed=seed,
                 )
                 self.targets.append(target)
 
@@ -577,8 +590,7 @@ if __name__ == "__main__":
         "agent_start_dir": 0,
         "goal_pos": None,
         "hazard_cost": 1,
-        "num_targets": 1,
-        "target_move_prob": None,
+        "target_names": "One",
         "agent": None,
     }
 

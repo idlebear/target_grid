@@ -147,7 +147,11 @@ class Target(Object):
         self.initial_node = self.node
         self.initial_orientation = self.orientation
         self.move_prob = kwargs.get("move_prob", None)
+
+        # Target class properties
         self.occluding = kwargs.get("occluding", False)
+        self.target_class = kwargs.get("target_class", None)
+        self.motion_type = kwargs.get("motion_type", "random")
 
     def reset(self, seed=None):
         self.node = self.initial_node
@@ -164,6 +168,8 @@ class Target(Object):
         new_target.rng = self.rng
         new_target.move_prob = self.move_prob
         new_target.occluding = self.occluding
+        new_target.target_class = self.target_class
+        new_target.motion_type = self.motion_type
         return new_target
 
     def step(self, graph: GridGraph):
