@@ -39,6 +39,7 @@ DEFAULT_WORLD_PARAMETERS = {
     "target_seeds": None,
     "agent": None,
     "max_steps": DEFAULT_MAX_STEP,
+    "view_range": None,
     "screen_width": DEFAULT_SCREEN_WIDTH,
     "screen_height": DEFAULT_SCREEN_HEIGHT,
 }
@@ -78,6 +79,7 @@ class TargetWorldEnv(gym.Env):
         self.max_steps = params["max_steps"]
         self.screen_width = params["screen_width"]
         self.screen_height = params["screen_height"]
+        self.view_range = params["view_range"]
 
         assert self.grid_data is None or (
             np.max(self.grid_data) <= 1 and np.min(self.grid_data) >= 0
@@ -166,25 +168,20 @@ class TargetWorldEnv(gym.Env):
         for pos in occluding_positions:
             visibility_grid[pos[1], pos[0]] = 1
 
-        if np.all(visibility_grid == 0):
-            visibility = np.ones((self.size, self.size))
-        else:
-            height, width = visibility_grid.shape
-            ends = np.array(
-                [[i, j] for j in range(height) for i in range(width)]
-            )  # + 0.5
-            start = (
-                np.array(
-                    [
-                        x,
-                    ]
-                )
-                # + 0.5
+        height, width = visibility_grid.shape
+        ends = np.array([[i, j] for j in range(height) for i in range(width)])  # + 0.5
+        start = (
+            np.array(
+                [
+                    x,
+                ]
             )
-            # Bresenham's line algorithm (integer based)
-            visibility = visibility_from_region(
-                data=visibility_grid, starts=start, ends=ends
-            ).reshape(height, width)
+            # + 0.5
+        )
+        # Bresenham's line algorithm (integer based)
+        visibility = visibility_from_region(
+            data=visibility_grid, starts=start, ends=ends, max_range=self.view_range
+        ).reshape(height, width)
         self.visibility_cache[cache_key] = visibility
         return visibility
 
