@@ -58,12 +58,44 @@ class Window:
         self.elapsed_time_text = pygame.font.SysFont("dejavuserif", 10)
         self.status_font = pygame.font.SysFont("roboto", STATUS_FONT_SIZE)
 
-        self.xmargin = margin * 0.5
-        self.ymargin = margin * 0.5
         self.screen_width = screen_width
         self.screen_height = screen_height
-        self.env_size = min(screen_height, screen_width) - margin
-        self.scale = self.env_size / display_size  # pixels per meter
+        self.margin = float(margin)
+
+        # Backward compatible API:
+        # - scalar display_size => square world with that side length
+        # - tuple/list display_size => (cols, rows) rectangular world
+        if isinstance(display_size, (tuple, list, np.ndarray)):
+            if len(display_size) != 2:
+                raise ValueError(
+                    "display_size sequence must have length 2: (cols, rows)"
+                )
+            self.display_cols = float(display_size[0])
+            self.display_rows = float(display_size[1])
+        else:
+            side = float(display_size)
+            self.display_cols = side
+            self.display_rows = side
+
+        if self.display_cols <= 0.0 or self.display_rows <= 0.0:
+            raise ValueError("display_size values must be > 0")
+
+        # Use a single uniform scale that maximizes the displayed grid size while
+        # respecting screen bounds and requested margins.
+        available_width = max(1.0, float(self.screen_width) - 2.0 * self.margin)
+        available_height = max(1.0, float(self.screen_height) - 2.0 * self.margin)
+        self.scale = min(
+            available_width / self.display_cols,
+            available_height / self.display_rows,
+        )
+
+        self.env_width = self.display_cols * self.scale
+        self.env_height = self.display_rows * self.scale
+        self.env_size = min(self.env_width, self.env_height)
+
+        # Center the environment in the screen.
+        self.xmargin = (float(self.screen_width) - self.env_width) * 0.5
+        self.ymargin = (float(self.screen_height) - self.env_height) * 0.5
         self.display_size = display_size
         self.border_offset = 10
         self.origin = display_origin
@@ -284,8 +316,8 @@ class Window:
             (
                 self.xmargin - self.border_offset,
                 self.ymargin - self.border_offset,
-                self.env_size + self.border_offset * 2,
-                self.env_size + self.border_offset * 2,
+                self.env_width + self.border_offset * 2,
+                self.env_height + self.border_offset * 2,
             ),
             2,
         )
@@ -296,8 +328,8 @@ class Window:
         text_width, text_height = self.status_font.size(collisions_str)
         time_text_width, time_text_height = self.status_font.size(time_str)
 
-        x_avg_offset = self.env_size + self.xmargin - text_width - STATUS_XMARGIN * 2
-        y_avg_offset = self.env_size + self.ymargin - text_height - STATUS_YMARGIN
+        x_avg_offset = self.env_width + self.xmargin - text_width - STATUS_XMARGIN * 2
+        y_avg_offset = self.env_height + self.ymargin - text_height - STATUS_YMARGIN
 
         pygame.draw.rect(
             self.screen,
