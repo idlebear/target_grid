@@ -255,6 +255,7 @@ class Graph:
             remove_edge = generator.random
 
         # disconnect any nodes where the cell is occupied in the grid
+        nodes_to_remove = []
         for node in G.nodes:
             x, y = node
             if grid[y, x]:
@@ -262,6 +263,9 @@ class Graph:
                 edges = list(G.edges(node))
                 for edge in edges:
                     G.remove_edge(*edge)
+                nodes_to_remove.append(node)
+        for node in nodes_to_remove:
+            G.remove_node(node)
 
         # Remove edges randomly while ensuring the graph remains connected
         if edge_probability < 1:
@@ -279,10 +283,10 @@ class Graph:
         """
         Check if the next node is a valid node in the graph
         """
-        neighbours = list(self.G.neighbors(node))
-        if next_node in neighbours:
-            return next_node
-        return node
+        if not self.G.has_node(next_node):
+            return node
+
+        return next_node
 
 
 class GridGraph(Graph):
@@ -358,10 +362,16 @@ class GridGraph(Graph):
         Get the neighbours of a node in the graph
         """
         grid_out = True
-        if type(node) is int:
+        if isinstance(node, int):
             node = self.grid_index(node)
             grid_out = False
-        neighbours = list(self.G.neighbors(node))
+
+        try:
+            neighbours = list(self.G.neighbors(node))
+        except nx.exception.NetworkXError:
+            # print(f"Error getting neighbours for node {node}: {e}")
+            neighbours = []
+
         if not grid_out:
             neighbours = [self.linear_index(n) for n in neighbours]
         return neighbours

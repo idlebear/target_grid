@@ -477,12 +477,17 @@ class TargetWorldEnv(gym.Env):
         if self.steps >= self.max_steps:
             return self._get_obs(), 0, True, True, self._get_info()
 
+        # grab all the current agent and target positions
+        occupied_positions = [self.graph.linear_index(tuple(self.agent.node))]
+        for target in self.targets:
+            occupied_positions.append(self.graph.linear_index(tuple(target.node)))
+
         # Map the action (element of {0,1,2,3}) to the direction we walk in
         self.agent.step(self.graph, action)
 
         # step all of the targets
         for target in self.targets:
-            target.step(self.graph)
+            target.step(self.graph, occupied_positions)
 
         # if there is a collision, the episode is over
         if self.hazard_cost:

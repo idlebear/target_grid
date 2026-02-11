@@ -4,7 +4,7 @@ This module defines objects that are capable of moving and drawing themselves.
 
 import numpy as np
 
-from .actions import Actions, action_to_node, node_to_action
+from .actions import Actions, action_to_node
 from .graphs import GridGraph
 from .window import Window, Colors
 
@@ -172,22 +172,39 @@ class Target(Object):
         new_target.motion_type = self.motion_type
         return new_target
 
-    def step(self, graph: GridGraph):
+    def step(self, graph: GridGraph, occupied_positions: list = None):
         if self.node is None:
             return
 
         if self.move_prob is not None:
             node_index = graph.linear_index(self.node)
-            next_node_index = self.rng.choice(
-                len(self.move_prob[node_index]), p=self.move_prob[node_index]
-            )
-            next_node = graph.grid_index(next_node_index)
-            action = node_to_action(src=self.node, dst=next_node)
+            move_prob = self.move_prob[node_index].copy()
+            # zero out the probabilities of occupied positions
+            if occupied_positions is not None:
+                for pos in occupied_positions:
+                    move_prob[pos] = 0.0
+                # renormalize
+                total_prob = np.sum(move_prob)
+                if total_prob > 0:
+                    move_prob /= total_prob
+                else:
+                    move_prob = self.move_prob[node_index]
+            next_node_index = self.rng.choice(len(move_prob), p=move_prob)
+            self.node = graph.grid_index(next_node_index)
+            # ignore orientation for now -- we are allowing jumps to non-neighbour nodes
         else:
-            action = self.rng.integers(0, self.action_space_size)
-            next_node = action_to_node(node=self.node, action=action)
-        self.orientation = action
-        self.node = graph.validate_node(self.node, next_node)
+            attempts = 0
+            while True:
+                action = self.rng.integers(0, self.action_space_size)
+                next_node = action_to_node(node=self.node, action=action)
+                if graph.linear_index(next_node) not in occupied_positions:
+                    break
+                attempts += 1
+                if attempts >= 10:
+                    # give up and stay in place
+                    return
+            self.orientation = action
+            self.node = graph.validate_node(self.node, next_node)
 
     def draw(self, window: Window, visibility: float = 1.0):
         color = list(self.color)
