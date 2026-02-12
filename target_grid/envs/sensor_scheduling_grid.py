@@ -40,6 +40,7 @@ DEFAULT_GRID_PARAMETERS = {
     "sensor_specs": None,
     "sensor_visibility": None,
     "initial_target_states": None,
+    "sample_initial_state_from_belief": False,
     "initial_belief": "uniform",
     "true_state_in_info": False,
     "screen_width": DEFAULT_SCREEN_WIDTH,
@@ -207,6 +208,9 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
             gaussian_sigma=float(params["gaussian_sigma"]),
             initial_target_states=initial_target_states,
             initial_belief=params["initial_belief"],
+            sample_initial_state_from_belief=bool(
+                params.get("sample_initial_state_from_belief", False)
+            ),
             true_state_in_info=bool(params["true_state_in_info"]),
             obstacle_grid=grid_data,
             screen_width=int(params["screen_width"]),

@@ -1,12 +1,16 @@
 from enum import IntEnum
+import os
+
+os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
+
 import matplotlib as mpl
+
+mpl.use("pdf")
+
 import matplotlib.pyplot as plt
 import seaborn as sb
 import numpy as np
-import os
 import distinctipy
-
-mpl.use("pdf")
 # import scienceplots
 # plt.style.use(['science', 'ieee'])
 

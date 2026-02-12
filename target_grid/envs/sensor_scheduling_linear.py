@@ -38,6 +38,7 @@ DEFAULT_LINEAR_PARAMETERS = {
     "sensor_specs": None,
     "sensor_visibility": None,
     "initial_target_states": None,
+    "sample_initial_state_from_belief": False,
     "initial_belief": "uniform",
     "true_state_in_info": False,
     "screen_width": DEFAULT_SCREEN_WIDTH,
@@ -286,7 +287,14 @@ class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
             )
 
         initial_target_states = params.get("initial_target_states", None)
-        if initial_target_states is None and params["num_targets"] == 1:
+        sample_initial_from_belief = bool(
+            params.get("sample_initial_state_from_belief", False)
+        )
+        if (
+            initial_target_states is None
+            and params["num_targets"] == 1
+            and not sample_initial_from_belief
+        ):
             # Default to center state for paper-aligned setup.
             initial_target_states = [num_network_states // 2]
 
@@ -309,6 +317,7 @@ class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
             gaussian_sigma=float(params["gaussian_sigma"]),
             initial_target_states=initial_target_states,
             initial_belief=params["initial_belief"],
+            sample_initial_state_from_belief=sample_initial_from_belief,
             true_state_in_info=bool(params["true_state_in_info"]),
             obstacle_grid=np.zeros((1, num_states), dtype=np.int8),
             screen_width=int(params["screen_width"]),

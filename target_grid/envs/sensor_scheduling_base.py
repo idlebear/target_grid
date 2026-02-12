@@ -44,6 +44,7 @@ class SensorSchedulingBaseEnv(gym.Env):
         gaussian_sigma: float = 0.2,
         initial_target_states: Sequence[int] | None = None,
         initial_belief: str | np.ndarray = "uniform",
+        sample_initial_state_from_belief: bool = False,
         true_state_in_info: bool = False,
         obstacle_grid: np.ndarray | None = None,
         screen_width: int = DEFAULT_SCREEN_WIDTH,
@@ -123,6 +124,7 @@ class SensorSchedulingBaseEnv(gym.Env):
             else [self._coerce_state_value(v) for v in initial_target_states]
         )
         self.initial_belief = initial_belief
+        self.sample_initial_state_from_belief = bool(sample_initial_state_from_belief)
 
         self.obstacle_grid = (
             None
@@ -216,14 +218,21 @@ class SensorSchedulingBaseEnv(gym.Env):
             candidates = list(range(self.num_states))
         return int(self.np_random.choice(candidates))
 
-    def _reset_belief(self, options: dict[str, Any] | None = None) -> None:
-        if options is None:
-            options = {}
-        init = options.get("initial_belief", self.initial_belief)
+    def _resolve_initial_belief_array(
+        self, init: str | np.ndarray
+    ) -> np.ndarray:
+        """
+        Resolve initial belief specification into a normalized
+        (num_targets, num_states) array.
+        """
         if isinstance(init, str):
             if init == "uniform":
-                self.belief[:, :] = 1.0 / float(self.num_states)
-                return
+                arr = np.full(
+                    (self.num_targets, self.num_states),
+                    1.0 / float(self.num_states),
+                    dtype=np.float64,
+                )
+                return arr
             if init == "uniform_non_absorbing":
                 mask = np.ones((self.num_states,), dtype=np.float64)
                 for idx in self.absorbing_states:
@@ -231,9 +240,10 @@ class SensorSchedulingBaseEnv(gym.Env):
                 if np.all(mask == 0.0):
                     mask[:] = 1.0
                 mask /= np.sum(mask)
-                for k in range(self.num_targets):
-                    self.belief[k, :] = mask
-                return
+                arr = np.broadcast_to(
+                    mask.reshape(1, -1), (self.num_targets, self.num_states)
+                ).copy()
+                return arr
             raise ValueError(f"unknown initial_belief mode '{init}'")
 
         arr = np.asarray(init, dtype=np.float64)
@@ -249,7 +259,15 @@ class SensorSchedulingBaseEnv(gym.Env):
         arr[arr < 0.0] = 0.0
         row_sum = arr.sum(axis=1, keepdims=True)
         row_sum[row_sum <= 0.0] = 1.0
-        self.belief[:, :] = arr / row_sum
+        return arr / row_sum
+
+    def _reset_belief(self, options: dict[str, Any] | None = None) -> np.ndarray:
+        if options is None:
+            options = {}
+        init = options.get("initial_belief", self.initial_belief)
+        arr = self._resolve_initial_belief_array(init)
+        self.belief[:, :] = arr
+        return arr
 
     def _signal_mean(self, sensor_idx: int, state_idx: int) -> float:
         sx, sy = self.sensors[sensor_idx].location
@@ -386,6 +404,10 @@ class SensorSchedulingBaseEnv(gym.Env):
         per_target = np.zeros((self.num_targets,), dtype=np.float64)
         for k in range(self.num_targets):
             true_state = int(self.target_states[k])
+            if true_state in self.absorbing_states:
+                # Terminal absorbing states are cost-free.
+                per_target[k] = 0.0
+                continue
             if self.tracking_cost_mode == "unobserved":
                 seen = bool(
                     np.any(
@@ -452,9 +474,19 @@ class SensorSchedulingBaseEnv(gym.Env):
 
         starts = options.get("initial_target_states", self.initial_target_states)
         if starts is None:
-            self.target_states[:] = [
-                self._random_start_state() for _ in range(self.num_targets)
-            ]
+            if self.sample_initial_state_from_belief:
+                init_dist = self._resolve_initial_belief_array(
+                    options.get("initial_belief", self.initial_belief)
+                )
+                sampled = []
+                for k in range(self.num_targets):
+                    p = np.asarray(init_dist[k, :], dtype=np.float64)
+                    sampled.append(int(self.np_random.choice(self.num_states, p=p)))
+                self.target_states[:] = sampled
+            else:
+                self.target_states[:] = [
+                    self._random_start_state() for _ in range(self.num_targets)
+                ]
         else:
             if len(starts) != self.num_targets:
                 raise ValueError(

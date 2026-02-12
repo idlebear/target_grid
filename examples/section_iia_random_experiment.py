@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
 from typing import Iterable
+
+os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
 
 import gymnasium as gym
 import numpy as np
@@ -17,9 +20,13 @@ if str(SENSOR_WORLD_ROOT) not in sys.path:
     sys.path.insert(0, str(SENSOR_WORLD_ROOT))
 
 import target_grid  # noqa: F401  # registers env IDs
-from target_grid.envs import build_section_iia_41_world_parameters
+from target_grid.envs import (
+    SensorSchedulingLinearEnv,
+    build_section_iia_41_world_parameters,
+)
 
 from latex import write_table
+from lower_bounds import section_iia_observable_after_control_lower_bound
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,7 @@ class ExperimentConfig:
     max_steps: int
     seed: int
     output_dir: Path
+    lower_bound_lambdas: tuple[float, ...] | None
 
 
 def _parse_awake_probabilities(raw: str) -> tuple[float, ...]:
@@ -46,6 +54,16 @@ def _parse_awake_probabilities(raw: str) -> tuple[float, ...]:
         raise ValueError("at least one awake probability must be provided")
     # deterministic order and dedupe
     return tuple(sorted(set(probs)))
+
+
+def _parse_optional_float_tuple(raw: str) -> tuple[float, ...] | None:
+    tokens = [t.strip() for t in raw.split(",") if t.strip() != ""]
+    if len(tokens) == 0:
+        return None
+    values = tuple(float(t) for t in tokens)
+    if any(v < 0.0 for v in values):
+        raise ValueError("lower-bound lambdas must be non-negative")
+    return tuple(sorted(set(values)))
 
 
 def _ci95(values: pd.Series) -> float:
@@ -195,9 +213,38 @@ def _run_experiment(config: ExperimentConfig) -> tuple[pd.DataFrame, pd.DataFram
     return episodes_df, summary_df
 
 
+def _compute_lower_bound_summary(config: ExperimentConfig) -> pd.DataFrame:
+    world_parameters = build_section_iia_41_world_parameters(
+        lambda_energy=config.lambda_energy,
+        max_steps=config.max_steps,
+        screen_width=1600,
+        screen_height=180,
+    )
+    env = SensorSchedulingLinearEnv(render_mode=None, world_parameters=world_parameters)
+    try:
+        start_state = (
+            int(env.initial_target_states[0])
+            if env.initial_target_states is not None and len(env.initial_target_states) > 0
+            else int(env.num_states // 2)
+        )
+        lower_bound_df = section_iia_observable_after_control_lower_bound(
+            transition_matrix=np.asarray(env.transition_matrix, dtype=np.float64),
+            coverage_matrix=np.asarray(env.coverage_matrix, dtype=bool),
+            absorbing_states=set(int(s) for s in env.absorbing_states),
+            start_state=start_state,
+            lambda_values=config.lower_bound_lambdas,
+        )
+    finally:
+        env.close()
+
+    lower_bound_df["experiment"] = "section_iia_random"
+    return lower_bound_df
+
+
 def _write_outputs(
     episodes_df: pd.DataFrame,
     summary_df: pd.DataFrame,
+    lower_bound_df: pd.DataFrame | None,
     *,
     output_dir: Path,
     write_plot: bool,
@@ -209,19 +256,43 @@ def _write_outputs(
     summary_csv = output_dir / "section_iia_random_summary_stats.csv"
     episodes_df.to_csv(episodes_csv, index=False)
     summary_df.to_csv(summary_csv, index=False)
+    if lower_bound_df is not None and not lower_bound_df.empty:
+        lower_bound_csv = output_dir / "section_iia_lower_bound_summary_stats.csv"
+        lower_bound_df.to_csv(lower_bound_csv, index=False)
 
     if write_plot:
         from plots import plot
 
-        plot_df = summary_df.sort_values("mean_active_sensors_per_step").copy()
+        plot_frames = [
+            summary_df[
+                [
+                    "policy",
+                    "mean_active_sensors_per_step",
+                    "mean_tracking_error_per_step",
+                ]
+            ].copy()
+        ]
+        if lower_bound_df is not None and not lower_bound_df.empty:
+            plot_frames.append(
+                lower_bound_df[
+                    [
+                        "policy",
+                        "mean_active_sensors_per_step",
+                        "mean_tracking_error_per_step",
+                    ]
+                ].copy()
+            )
+        plot_df = pd.concat(plot_frames, ignore_index=True)
+        plot_df = plot_df.sort_values("mean_active_sensors_per_step")
+        policies = sorted(plot_df["policy"].astype(str).unique())
         plot_path = output_dir / "section_iia_random_tracking_error_vs_sensors_awake.pdf"
         plot(
             x="mean_active_sensors_per_step",
             y="mean_tracking_error_per_step",
             hue="policy",
             data=plot_df,
-            order=["random_bernoulli"],
-            hue_order=["random_bernoulli"],
+            order=policies,
+            hue_order=policies,
             x_label="Sensors awake per unit time",
             y_label="Tracking error per unit time",
             legend_location="best",
@@ -330,6 +401,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip generating the LaTeX table.",
     )
+    parser.add_argument(
+        "--skip-lower-bound",
+        action="store_true",
+        help="Skip observable-after-control lower-bound calculation.",
+    )
+    parser.add_argument(
+        "--lower-bound-lambdas",
+        type=str,
+        default="",
+        help=(
+            "Optional comma-separated lambda values for lower-bound sweep. "
+            "When omitted, an automatic threshold-based grid is used."
+        ),
+    )
     return parser
 
 
@@ -344,12 +429,17 @@ def main(argv: Iterable[str] | None = None) -> int:
         max_steps=int(args.max_steps),
         seed=int(args.seed),
         output_dir=Path(args.output_dir),
+        lower_bound_lambdas=_parse_optional_float_tuple(args.lower_bound_lambdas),
     )
 
     episodes_df, summary_df = _run_experiment(config)
+    lower_bound_df = None
+    if not bool(args.skip_lower_bound):
+        lower_bound_df = _compute_lower_bound_summary(config)
     _write_outputs(
         episodes_df,
         summary_df,
+        lower_bound_df,
         output_dir=config.output_dir,
         write_plot=not bool(args.skip_plot),
         write_latex=not bool(args.skip_latex),
@@ -357,6 +447,11 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print(f"Wrote episode CSV: {config.output_dir / 'section_iia_random_episode_stats.csv'}")
     print(f"Wrote summary CSV: {config.output_dir / 'section_iia_random_summary_stats.csv'}")
+    if lower_bound_df is not None and not lower_bound_df.empty:
+        print(
+            "Wrote lower-bound CSV: "
+            f"{config.output_dir / 'section_iia_lower_bound_summary_stats.csv'}"
+        )
     if not bool(args.skip_plot):
         print(
             "Wrote plot: "
