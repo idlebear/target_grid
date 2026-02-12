@@ -1,7 +1,10 @@
 import numpy as np
 import gymnasium as gym
 import target_grid  # noqa: F401  # register envs
-from target_grid.envs import build_section_iia_41_world_parameters
+from target_grid.envs import (
+    build_section_iia_41_world_parameters,
+    build_section_iib_20_world_parameters,
+)
 
 
 def run_linear():
@@ -79,6 +82,32 @@ def run_grid():
     print("Grid demo reward:", total_reward)
 
 
+def run_section_iib(sensor_model: str = "simple"):
+    world_parameters = build_section_iib_20_world_parameters(
+        sensor_model=sensor_model,
+        lambda_energy=0.2,
+        max_steps=50,
+        screen_width=1200,
+        screen_height=220,
+    )
+    env = gym.make(
+        "target_grid/SensorSchedulingLinear-v0",
+        render_mode="human",
+        world_parameters=world_parameters,
+    )
+    obs, info = env.reset(seed=11)
+    total_reward = 0.0
+    for _ in range(25):
+        obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+        total_reward += reward
+        if terminated or truncated:
+            break
+    env.close()
+    print(f"Section II-B ({sensor_model}) demo reward:", total_reward)
+
+
 if __name__ == "__main__":
     run_linear()
+    run_section_iib("simple")
+    run_section_iib("probabilistic")
     run_grid()

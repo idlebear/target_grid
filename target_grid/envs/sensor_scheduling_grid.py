@@ -27,6 +27,8 @@ DEFAULT_GRID_PARAMETERS = {
     "tracking_cost_mode": "unobserved",
     "tracking_reduce": "sum",
     "observation_mode": "discrete",
+    "discrete_sensor_model": "simple",  # simple | probabilistic
+    "probabilistic_observation_correct_prob": 0.8,
     "gaussian_sigma": 0.2,
     "transition_matrix": None,
     "boundary_behavior": "stay",  # stay | clip | exit
@@ -196,6 +198,12 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
             tracking_cost_mode=str(params["tracking_cost_mode"]),
             tracking_reduce=str(params["tracking_reduce"]),
             observation_mode=str(params["observation_mode"]),
+            discrete_sensor_model=str(
+                params.get("discrete_sensor_model", "simple")
+            ),
+            probabilistic_observation_correct_prob=float(
+                params.get("probabilistic_observation_correct_prob", 0.8)
+            ),
             gaussian_sigma=float(params["gaussian_sigma"]),
             initial_target_states=initial_target_states,
             initial_belief=params["initial_belief"],

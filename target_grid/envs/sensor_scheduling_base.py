@@ -39,6 +39,8 @@ class SensorSchedulingBaseEnv(gym.Env):
         tracking_cost_mode: str = "unobserved",
         tracking_reduce: str = "sum",
         observation_mode: str = "discrete",
+        discrete_sensor_model: str = "simple",
+        probabilistic_observation_correct_prob: float = 0.8,
         gaussian_sigma: float = 0.2,
         initial_target_states: Sequence[int] | None = None,
         initial_belief: str | np.ndarray = "uniform",
@@ -92,6 +94,18 @@ class SensorSchedulingBaseEnv(gym.Env):
         self.observation_mode = str(observation_mode)
         if self.observation_mode not in {"discrete", "continuous_gaussian"}:
             raise ValueError("observation_mode must be discrete or continuous_gaussian")
+        self.discrete_sensor_model = str(discrete_sensor_model)
+        if self.discrete_sensor_model not in {"simple", "probabilistic"}:
+            raise ValueError(
+                "discrete_sensor_model must be one of {'simple', 'probabilistic'}"
+            )
+        self.probabilistic_observation_correct_prob = float(
+            probabilistic_observation_correct_prob
+        )
+        if not (0.0 <= self.probabilistic_observation_correct_prob <= 1.0):
+            raise ValueError(
+                "probabilistic_observation_correct_prob must be in [0, 1]"
+            )
         self.gaussian_sigma = float(gaussian_sigma)
         self.true_state_in_info = bool(true_state_in_info)
 
@@ -261,7 +275,24 @@ class SensorSchedulingBaseEnv(gym.Env):
                     continue
                 valid[k, sensor_idx] = 1
                 if self.observation_mode == "discrete":
-                    measurements[k, sensor_idx] = float(true_state)
+                    if self.discrete_sensor_model == "simple":
+                        measurements[k, sensor_idx] = float(true_state)
+                    else:
+                        covered_states = np.flatnonzero(
+                            self.coverage_matrix[sensor_idx, :]
+                        )
+                        if covered_states.size <= 1:
+                            measured_state = true_state
+                        else:
+                            p = self.probabilistic_observation_correct_prob
+                            if self.np_random.random() < p:
+                                measured_state = true_state
+                            else:
+                                candidates = covered_states[covered_states != true_state]
+                                measured_state = int(
+                                    self.np_random.choice(candidates)
+                                )
+                        measurements[k, sensor_idx] = float(measured_state)
                 else:
                     mu = self._signal_mean(sensor_idx, true_state)
                     measurements[k, sensor_idx] = float(
@@ -301,8 +332,27 @@ class SensorSchedulingBaseEnv(gym.Env):
                     else:
                         state_idx = int(round(meas))
                         sensor_like = np.zeros((self.num_states,), dtype=np.float64)
-                        if 0 <= state_idx < self.num_states and covered[state_idx]:
-                            sensor_like[state_idx] = 1.0
+                        if self.discrete_sensor_model == "simple":
+                            if (
+                                0 <= state_idx < self.num_states
+                                and covered[state_idx]
+                            ):
+                                sensor_like[state_idx] = 1.0
+                        else:
+                            covered_states = np.flatnonzero(covered)
+                            if covered_states.size == 1:
+                                only = int(covered_states[0])
+                                if state_idx == only:
+                                    sensor_like[only] = 1.0
+                            elif covered_states.size > 1:
+                                p = self.probabilistic_observation_correct_prob
+                                miss = (1.0 - p) / float(covered_states.size - 1)
+                                sensor_like[covered_states] = miss
+                                if (
+                                    0 <= state_idx < self.num_states
+                                    and covered[state_idx]
+                                ):
+                                    sensor_like[state_idx] = p
                     like *= sensor_like
                 else:
                     if not is_valid:

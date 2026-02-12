@@ -16,6 +16,7 @@ from .sensors import SensorSpec
 from .sensor_scheduling_linear import (
     SensorSchedulingLinearEnv,
     build_section_iia_41_world_parameters,
+    build_section_iib_20_world_parameters,
 )
 from .sensor_scheduling_grid import SensorSchedulingGridEnv
 from .actions import (
@@ -32,6 +33,7 @@ __all__ = [
     "SensorSpec",
     "SensorSchedulingLinearEnv",
     "build_section_iia_41_world_parameters",
+    "build_section_iib_20_world_parameters",
     "SensorSchedulingGridEnv",
     "Target",
     "Agent",
