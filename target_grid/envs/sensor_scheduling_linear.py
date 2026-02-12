@@ -31,7 +31,7 @@ DEFAULT_LINEAR_PARAMETERS = {
     "transition_matrix": None,
     "transition_offsets": [-3, -2, -1, 0, 1, 2, 3],
     "transition_probabilities": [1 / 7.0] * 7,
-    "boundary_behavior": "stay",  # stay | clip
+    "boundary_behavior": "stay",  # stay | clip | exit
     "absorbing_states": [],
     "sensor_specs": None,
     "sensor_visibility": None,
@@ -41,6 +41,58 @@ DEFAULT_LINEAR_PARAMETERS = {
     "screen_width": DEFAULT_SCREEN_WIDTH,
     "screen_height": DEFAULT_SCREEN_HEIGHT,
 }
+
+
+SECTION_IIA_41_OFFSETS = [-3, -2, -1, 0, 1, 2, 3]
+# Atia et al. (2011), Table I (simple model, linear network of 41 sensors)
+SECTION_IIA_41_PROBABILITIES = [0.23, 0.10, 0.01, 0.33, 0.06, 0.05, 0.22]
+
+
+def build_section_iia_41_world_parameters(
+    *,
+    lambda_energy: float = 0.2,
+    max_steps: int = DEFAULT_MAX_STEP,
+    screen_width: int = DEFAULT_SCREEN_WIDTH,
+    screen_height: int = DEFAULT_SCREEN_HEIGHT,
+) -> dict[str, Any]:
+    """
+    Build a paper-aligned Section II-A configuration:
+    - 41 linear states
+    - one non-overlapping sensor per state (41 sensors total)
+    - Table I transition offsets/probabilities
+    """
+    num_states = 41
+    sensor_specs = [
+        {
+            "id": f"s{i}",
+            "location": (i, 0),
+            "fov_deg": 360.0,
+            "range": 0.0,  # exactly one covered cell per sensor
+            "direction_deg": 0.0,
+            "energy_cost": 1.0,
+        }
+        for i in range(num_states)
+    ]
+    # Explicit identity visibility matrix to enforce non-overlapping sensing.
+    sensor_visibility = np.eye(num_states, dtype=bool)
+
+    return {
+        "num_states": num_states,
+        "num_targets": 1,
+        "max_steps": int(max_steps),
+        "lambda_energy": float(lambda_energy),
+        "tracking_cost_mode": "unobserved",
+        "tracking_reduce": "sum",
+        "observation_mode": "discrete",
+        "transition_offsets": list(SECTION_IIA_41_OFFSETS),
+        "transition_probabilities": list(SECTION_IIA_41_PROBABILITIES),
+        "boundary_behavior": "exit",
+        "sensor_specs": sensor_specs,
+        "sensor_visibility": sensor_visibility,
+        "initial_target_states": [num_states // 2],
+        "screen_width": int(screen_width),
+        "screen_height": int(screen_height),
+    }
 
 
 class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
@@ -55,24 +107,46 @@ class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
         if world_parameters is not None:
             params.update(world_parameters)
 
-        num_states = int(params["num_states"])
-        if num_states <= 0:
+        num_network_states = int(params["num_states"])
+        if num_network_states <= 0:
             raise ValueError("num_states must be >= 1")
 
-        absorbing_states = set(int(v) for v in params.get("absorbing_states", []))
-        for s in absorbing_states:
+        boundary_behavior = str(params.get("boundary_behavior", "stay"))
+        if boundary_behavior not in {"stay", "clip", "exit"}:
+            raise ValueError("boundary_behavior must be one of {'stay', 'clip', 'exit'}")
+        add_exit_state = boundary_behavior == "exit"
+        num_states = num_network_states + (1 if add_exit_state else 0)
+        exit_state = num_states - 1 if add_exit_state else None
+
+        absorbing_states = set()
+        for raw in params.get("absorbing_states", []):
+            if raw == "exit":
+                if not add_exit_state:
+                    raise ValueError(
+                        "absorbing_states includes 'exit' but boundary_behavior!='exit'"
+                    )
+                absorbing_states.add(int(exit_state))
+                continue
+            s = int(raw)
             if s < 0 or s >= num_states:
                 raise ValueError(f"absorbing state {s} out of bounds")
+            absorbing_states.add(s)
+        if add_exit_state and exit_state is not None:
+            absorbing_states.add(int(exit_state))
 
-        state_coords = np.array([[i, 0] for i in range(num_states)], dtype=np.int32)
+        state_coords = [[i, 0] for i in range(num_network_states)]
+        if add_exit_state:
+            # Place the external absorbing exit immediately to the right.
+            state_coords.append([num_network_states, 0])
+        state_coords = np.array(state_coords, dtype=np.int32)
 
         transition_matrix = params.get("transition_matrix", None)
         if transition_matrix is None:
             transition_matrix = self._build_transition_matrix(
-                num_states=num_states,
+                num_network_states=num_network_states,
                 offsets=params["transition_offsets"],
                 probabilities=params["transition_probabilities"],
-                boundary_behavior=params.get("boundary_behavior", "stay"),
+                boundary_behavior=boundary_behavior,
                 absorbing_states=absorbing_states,
             )
         else:
@@ -84,26 +158,38 @@ class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
 
         raw_sensor_specs = params.get("sensor_specs", None)
         if raw_sensor_specs is None:
-            sensors = default_linear_sensors(num_states)
+            sensors = default_linear_sensors(num_network_states)
         else:
-            sensors = parse_sensor_specs(raw_sensor_specs, grid_shape=(1, num_states))
+            sensors = parse_sensor_specs(
+                raw_sensor_specs, grid_shape=(1, num_network_states)
+            )
         if len(sensors) == 0:
             raise ValueError("at least one sensor is required")
 
         sensor_visibility = params.get("sensor_visibility", None)
         if sensor_visibility is None:
-            coverage = compute_linear_coverage_matrix(sensors, num_states)
+            coverage = compute_linear_coverage_matrix(sensors, num_network_states)
         else:
             coverage = np.asarray(sensor_visibility, dtype=bool)
-            if coverage.shape != (len(sensors), num_states):
+            if coverage.shape not in {
+                (len(sensors), num_network_states),
+                (len(sensors), num_states),
+            }:
                 raise ValueError(
-                    "sensor_visibility must have shape (num_sensors, num_states)"
+                    "sensor_visibility must have shape "
+                    "(num_sensors, num_states) or "
+                    "(num_sensors, num_states+1 when boundary_behavior='exit')"
                 )
+        if add_exit_state and coverage.shape[1] == num_network_states:
+            # Exit state is outside sensor network and unobservable.
+            coverage = np.concatenate(
+                [coverage, np.zeros((len(sensors), 1), dtype=bool)], axis=1
+            )
 
         initial_target_states = params.get("initial_target_states", None)
         if initial_target_states is None and params["num_targets"] == 1:
             # Default to center state for paper-aligned setup.
-            initial_target_states = [num_states // 2]
+            initial_target_states = [num_network_states // 2]
 
         super().__init__(
             state_coords=state_coords,
@@ -132,7 +218,7 @@ class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
     @staticmethod
     def _build_transition_matrix(
         *,
-        num_states: int,
+        num_network_states: int,
         offsets: list[int],
         probabilities: list[float],
         boundary_behavior: str,
@@ -147,6 +233,9 @@ class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
         if not isclose(total, 1.0, rel_tol=1e-8, abs_tol=1e-8):
             raise ValueError("transition probabilities must sum to 1")
 
+        add_exit_state = boundary_behavior == "exit"
+        num_states = num_network_states + (1 if add_exit_state else 0)
+        exit_state = num_states - 1 if add_exit_state else None
         T = np.zeros((num_states, num_states), dtype=np.float64)
         for s in range(num_states):
             if s in absorbing_states:
@@ -155,17 +244,19 @@ class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
 
             for dx, prob in zip(offsets, p):
                 nxt = s + int(dx)
-                if 0 <= nxt < num_states:
+                if 0 <= nxt < num_network_states:
                     T[s, nxt] += prob
                 else:
-                    if boundary_behavior == "clip":
-                        nxt = min(max(nxt, 0), num_states - 1)
+                    if boundary_behavior == "exit":
+                        T[s, exit_state] += prob
+                    elif boundary_behavior == "clip":
+                        nxt = min(max(nxt, 0), num_network_states - 1)
                         T[s, nxt] += prob
                     elif boundary_behavior == "stay":
                         T[s, s] += prob
                     else:
                         raise ValueError(
-                            "boundary_behavior must be one of {'stay', 'clip'}"
+                            "boundary_behavior must be one of {'stay', 'clip', 'exit'}"
                         )
 
         row_sum = T.sum(axis=1, keepdims=True)

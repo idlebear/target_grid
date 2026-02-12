@@ -1,21 +1,20 @@
 import numpy as np
 import gymnasium as gym
 import target_grid  # noqa: F401  # register envs
+from target_grid.envs import build_section_iia_41_world_parameters
 
 
 def run_linear():
+    world_parameters = build_section_iia_41_world_parameters(
+        lambda_energy=0.2,
+        max_steps=50,
+        screen_width=4000,
+        screen_height=200,
+    )
     env = gym.make(
         "target_grid/SensorSchedulingLinear-v0",
         render_mode="human",
-        world_parameters={
-            "num_states": 41,
-            "num_targets": 1,
-            "absorbing_states": [0, 40],
-            "tracking_cost_mode": "hamming",
-            "lambda_energy": 0.2,
-            "screen_width": 4000,
-            "screen_height": 200,
-        },
+        world_parameters=world_parameters,
     )
     obs, info = env.reset(seed=1)
     total_reward = 0.0

@@ -29,6 +29,9 @@ DEFAULT_GRID_PARAMETERS = {
     "observation_mode": "discrete",
     "gaussian_sigma": 0.2,
     "transition_matrix": None,
+    "boundary_behavior": "stay",  # stay | clip | exit
+    "transition_deltas": None,
+    "transition_probabilities": None,
     "move_diagonal": False,
     "allow_stay": True,
     "absorbing_states": [],
@@ -70,24 +73,57 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
         if free_cells.shape[0] == 0:
             raise ValueError("grid contains no free traversable cells")
         # convert to (x, y)
-        state_coords = np.array([[int(x), int(y)] for y, x in free_cells], dtype=np.int32)
-        num_states = int(state_coords.shape[0])
-        coord_to_state = {(int(x), int(y)): idx for idx, (x, y) in enumerate(state_coords)}
+        network_state_coords = np.array(
+            [[int(x), int(y)] for y, x in free_cells], dtype=np.int32
+        )
+        num_network_states = int(network_state_coords.shape[0])
+        coord_to_state = {
+            (int(x), int(y)): idx for idx, (x, y) in enumerate(network_state_coords)
+        }
+
+        rows, cols = grid_data.shape
+
+        boundary_behavior = str(params.get("boundary_behavior", "stay"))
+        if boundary_behavior not in {"stay", "clip", "exit"}:
+            raise ValueError("boundary_behavior must be one of {'stay', 'clip', 'exit'}")
+        add_exit_state = boundary_behavior == "exit"
+        num_states = num_network_states + (1 if add_exit_state else 0)
+        exit_state = num_states - 1 if add_exit_state else None
 
         absorbing_states = self._coerce_absorbing_states(
             raw=params.get("absorbing_states", []),
             coord_to_state=coord_to_state,
-            num_states=num_states,
+            num_network_states=num_network_states,
+            add_exit_state=add_exit_state,
+            exit_state=exit_state,
         )
+        if add_exit_state:
+            absorbing_states.add(int(exit_state))
+
+        state_coords_list = network_state_coords.tolist()
+        if add_exit_state:
+            # External state intentionally outside the grid to represent "left network".
+            state_coords_list.append([cols, rows])
+        state_coords = np.array(state_coords_list, dtype=np.int32)
 
         transition_matrix = params.get("transition_matrix", None)
         if transition_matrix is None:
-            transition_matrix = self._build_neighbor_transition_matrix(
-                state_coords=state_coords,
-                coord_to_state=coord_to_state,
+            deltas, probs = self._parse_transition_model(
+                transition_deltas=params.get("transition_deltas", None),
+                transition_probabilities=params.get("transition_probabilities", None),
                 move_diagonal=bool(params.get("move_diagonal", False)),
                 allow_stay=bool(params.get("allow_stay", True)),
+            )
+            transition_matrix = self._build_neighbor_transition_matrix(
+                rows=rows,
+                cols=cols,
+                state_coords=network_state_coords,
+                coord_to_state=coord_to_state,
+                deltas=deltas,
+                probabilities=probs,
+                boundary_behavior=boundary_behavior,
                 absorbing_states=absorbing_states,
+                add_exit_state=add_exit_state,
             )
         else:
             transition_matrix = np.asarray(transition_matrix, dtype=np.float64)
@@ -116,20 +152,35 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
         if sensor_visibility is None:
             coverage = compute_grid_coverage_matrix(
                 sensors=sensors,
-                state_coords=state_coords,
+                state_coords=network_state_coords,
                 obstacle_grid=grid_data,
             )
         else:
             coverage = np.asarray(sensor_visibility, dtype=bool)
-            if coverage.shape != (len(sensors), num_states):
+            if coverage.shape not in {
+                (len(sensors), num_network_states),
+                (len(sensors), num_states),
+            }:
                 raise ValueError(
-                    "sensor_visibility must have shape (num_sensors, num_states)"
+                    "sensor_visibility must have shape "
+                    "(num_sensors, num_states) or "
+                    "(num_sensors, num_states+1 when boundary_behavior='exit')"
                 )
+        if add_exit_state and coverage.shape[1] == num_network_states:
+            coverage = np.concatenate(
+                [coverage, np.zeros((len(sensors), 1), dtype=bool)], axis=1
+            )
 
         initial_target_states = params.get("initial_target_states", None)
         if initial_target_states is not None:
             initial_target_states = [
-                self._coerce_start_state(v, coord_to_state, num_states)
+                self._coerce_start_state(
+                    v,
+                    coord_to_state,
+                    num_network_states,
+                    add_exit_state=add_exit_state,
+                    exit_state=exit_state,
+                )
                 for v in initial_target_states
             ]
 
@@ -162,11 +213,19 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
     def _coerce_start_state(
         value: Any,
         coord_to_state: dict[tuple[int, int], int],
-        num_states: int,
+        num_network_states: int,
+        *,
+        add_exit_state: bool,
+        exit_state: int | None,
     ) -> int:
+        if isinstance(value, str) and value == "exit":
+            if not add_exit_state:
+                raise ValueError("state 'exit' requires boundary_behavior='exit'")
+            return int(exit_state)
         if isinstance(value, (int, np.integer)):
             idx = int(value)
-            if idx < 0 or idx >= num_states:
+            max_states = num_network_states + (1 if add_exit_state else 0)
+            if idx < 0 or idx >= max_states:
                 raise ValueError(f"start state index {idx} out of bounds")
             return idx
         if isinstance(value, np.ndarray):
@@ -183,38 +242,89 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
         cls,
         raw: Iterable[Any],
         coord_to_state: dict[tuple[int, int], int],
-        num_states: int,
+        num_network_states: int,
+        add_exit_state: bool,
+        exit_state: int | None,
     ) -> set[int]:
         out: set[int] = set()
         for value in raw:
-            out.add(cls._coerce_start_state(value, coord_to_state, num_states))
+            out.add(
+                cls._coerce_start_state(
+                    value,
+                    coord_to_state,
+                    num_network_states,
+                    add_exit_state=add_exit_state,
+                    exit_state=exit_state,
+                )
+            )
         return out
+
+    @staticmethod
+    def _parse_transition_model(
+        *,
+        transition_deltas: list[list[int]] | list[tuple[int, int]] | None,
+        transition_probabilities: list[float] | None,
+        move_diagonal: bool,
+        allow_stay: bool,
+    ) -> tuple[list[tuple[int, int]], np.ndarray]:
+        if transition_deltas is None:
+            if move_diagonal:
+                deltas = [
+                    (-1, 0),
+                    (1, 0),
+                    (0, -1),
+                    (0, 1),
+                    (-1, -1),
+                    (-1, 1),
+                    (1, -1),
+                    (1, 1),
+                ]
+            else:
+                deltas = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            if allow_stay:
+                deltas.append((0, 0))
+        else:
+            deltas = []
+            for delta in transition_deltas:
+                if len(delta) != 2:
+                    raise ValueError("each transition delta must have length 2")
+                deltas.append((int(delta[0]), int(delta[1])))
+            if len(deltas) == 0:
+                raise ValueError("transition_deltas must not be empty")
+
+        if transition_probabilities is None:
+            probs = np.full((len(deltas),), 1.0 / float(len(deltas)), dtype=np.float64)
+        else:
+            probs = np.asarray(transition_probabilities, dtype=np.float64)
+            if probs.shape != (len(deltas),):
+                raise ValueError(
+                    "transition_probabilities length must match transition_deltas"
+                )
+            if np.any(probs < 0.0):
+                raise ValueError("transition_probabilities must be non-negative")
+            s = float(np.sum(probs))
+            if not np.isclose(s, 1.0, atol=1e-8):
+                raise ValueError("transition_probabilities must sum to 1")
+
+        return deltas, probs
 
     @staticmethod
     def _build_neighbor_transition_matrix(
         *,
+        rows: int,
+        cols: int,
         state_coords: np.ndarray,
         coord_to_state: dict[tuple[int, int], int],
-        move_diagonal: bool,
-        allow_stay: bool,
+        deltas: list[tuple[int, int]],
+        probabilities: np.ndarray,
+        boundary_behavior: str,
         absorbing_states: set[int],
+        add_exit_state: bool,
     ) -> np.ndarray:
-        num_states = state_coords.shape[0]
+        num_network_states = state_coords.shape[0]
+        num_states = num_network_states + (1 if add_exit_state else 0)
+        exit_state = num_states - 1 if add_exit_state else None
         T = np.zeros((num_states, num_states), dtype=np.float64)
-
-        if move_diagonal:
-            deltas = [
-                (-1, 0),
-                (1, 0),
-                (0, -1),
-                (0, 1),
-                (-1, -1),
-                (-1, 1),
-                (1, -1),
-                (1, 1),
-            ]
-        else:
-            deltas = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
         for s in range(num_states):
             if s in absorbing_states:
@@ -222,17 +332,37 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
                 continue
 
             x, y = int(state_coords[s, 0]), int(state_coords[s, 1])
-            next_states: list[int] = []
-            for dx, dy in deltas:
-                nxt = (x + dx, y + dy)
-                if nxt in coord_to_state:
-                    next_states.append(coord_to_state[nxt])
-            if allow_stay or len(next_states) == 0:
-                next_states.append(s)
+            for (dx, dy), p in zip(deltas, probabilities):
+                tx, ty = x + dx, y + dy
+                in_bounds = 0 <= tx < cols and 0 <= ty < rows
 
-            p = 1.0 / float(len(next_states))
-            for nxt in next_states:
-                T[s, nxt] += p
+                if in_bounds:
+                    nxt = (tx, ty)
+                    if nxt in coord_to_state:
+                        T[s, coord_to_state[nxt]] += p
+                    else:
+                        # Obstacle cells are non-traversable.
+                        T[s, s] += p
+                    continue
+
+                # Out-of-bounds => crossed an edge.
+                if boundary_behavior == "exit":
+                    T[s, exit_state] += p
+                elif boundary_behavior == "clip":
+                    cx = min(max(tx, 0), cols - 1)
+                    cy = min(max(ty, 0), rows - 1)
+                    clipped = (cx, cy)
+                    if clipped in coord_to_state:
+                        T[s, coord_to_state[clipped]] += p
+                    else:
+                        # If clipped location is obstacle, remain in place.
+                        T[s, s] += p
+                elif boundary_behavior == "stay":
+                    T[s, s] += p
+                else:
+                    raise ValueError(
+                        "boundary_behavior must be one of {'stay', 'clip', 'exit'}"
+                    )
 
         row_sum = T.sum(axis=1, keepdims=True)
         row_sum[row_sum <= 0.0] = 1.0

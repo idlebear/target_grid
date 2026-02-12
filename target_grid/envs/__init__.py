@@ -13,7 +13,10 @@ except Exception as exc:  # pragma: no cover - depends on optional CUDA stack
 from .objects import Target, Agent
 from .constants import GridState
 from .sensors import SensorSpec
-from .sensor_scheduling_linear import SensorSchedulingLinearEnv
+from .sensor_scheduling_linear import (
+    SensorSchedulingLinearEnv,
+    build_section_iia_41_world_parameters,
+)
 from .sensor_scheduling_grid import SensorSchedulingGridEnv
 from .actions import (
     Actions,
@@ -28,6 +31,7 @@ __all__ = [
     "TargetWorldEnv",
     "SensorSpec",
     "SensorSchedulingLinearEnv",
+    "build_section_iia_41_world_parameters",
     "SensorSchedulingGridEnv",
     "Target",
     "Agent",
