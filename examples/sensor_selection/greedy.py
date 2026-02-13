@@ -56,6 +56,21 @@ def select_sensors(
             raise ValueError("sensor_energy_costs length must match num_sensors")
         costs = np.clip(costs, 0.0, np.inf)
 
+    # Fast path: disjoint coverage makes the set function additive, so the
+    # iterative greedy solution equals a simple top-positive-net selection.
+    if int(np.max(np.sum(coverage_matrix.astype(np.int32), axis=0))) <= 1:
+        score = coverage_matrix.astype(np.float64) @ predicted_distribution
+        net_gain = score - lam * costs
+        positive = np.flatnonzero(net_gain > 0.0)
+        if positive.size == 0:
+            return action
+        if positive.size > k:
+            keep = positive[np.argsort(-net_gain[positive], kind="stable")[:k]]
+        else:
+            keep = positive
+        action[keep] = 1
+        return action
+
     covered = np.zeros((coverage_matrix.shape[1],), dtype=bool)
     selected: list[int] = []
     remaining = set(range(num_sensors))

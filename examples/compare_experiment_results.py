@@ -142,6 +142,7 @@ def _load_class_summary_frames(class_summary_files: list[Path]) -> pd.DataFrame:
 
 
 def _write_comparative_plots(
+    episodes_df: pd.DataFrame,
     summary_df: pd.DataFrame,
     class_summary_df: pd.DataFrame,
     output_dir: Path,
@@ -242,6 +243,38 @@ def _write_comparative_plots(
                 "lineplot_kwargs": {"marker": "o", "sort": True, "errorbar": None},
             },
         )
+
+    if (
+        not episodes_df.empty
+        and "action_selection_time_per_step_ms" in episodes_df.columns
+    ):
+        ep_df = episodes_df[
+            ["method_label", "action_selection_time_per_step_ms"]
+        ].copy()
+        ep_df = ep_df.dropna(subset=["action_selection_time_per_step_ms"])
+        if not ep_df.empty:
+            method_order_ep = sorted(ep_df["method_label"].astype(str).unique())
+            plot(
+                x="method_label",
+                y="action_selection_time_per_step_ms",
+                hue="method_label",
+                data=ep_df,
+                order=method_order_ep,
+                hue_order=method_order_ep,
+                x_label="Method",
+                y_label="Action Selection Time (ms/step)",
+                legend_location="best",
+                plot_name=str(
+                    output_dir / "comparative_action_selection_time_violin.pdf"
+                ),
+                plot_type="violin",
+                options={
+                    "width": 10,
+                    "height": 6,
+                    "legend_title": "Method",
+                    "label_fontsize": 13,
+                },
+            )
 
 
 def _write_latex_tables(
@@ -389,7 +422,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         )
 
     if not bool(args.skip_plot):
-        _write_comparative_plots(summary_df, class_summary_df, output_dir)
+        _write_comparative_plots(episodes_df, summary_df, class_summary_df, output_dir)
     if not bool(args.skip_latex):
         _write_latex_tables(episodes_df, summary_df, output_dir)
 

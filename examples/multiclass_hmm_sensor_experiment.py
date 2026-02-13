@@ -6,6 +6,7 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+from time import perf_counter
 from typing import Iterable
 
 os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
@@ -276,6 +277,7 @@ def _run_single_episode(
     total_energy_cost = 0.0
     total_total_cost = 0.0
     total_active_sensors = 0.0
+    total_action_selection_time_s = 0.0
     steps = 0
 
     try:
@@ -319,6 +321,7 @@ def _run_single_episode(
         terminated = False
         truncated = False
         while not (terminated or truncated):
+            t0 = perf_counter()
             action = selector_fn(
                 np.asarray(hmm.state_distribution, dtype=np.float64).copy(),
                 coverage_matrix=coverage_matrix,
@@ -330,6 +333,7 @@ def _run_single_episode(
                 lambda_energy=float(lambda_energy),
                 sensor_energy_costs=sensor_energy_costs,
             )
+            total_action_selection_time_s += perf_counter() - t0
             obs, reward, terminated, truncated, info = env.step(action)
             steps += 1
 
@@ -379,6 +383,10 @@ def _run_single_episode(
             "tracking_error_per_step": float(total_tracking_cost / steps_f),
             "energy_cost_per_step": float(total_energy_cost / steps_f),
             "total_cost_per_step": float(total_total_cost / steps_f),
+            "total_action_selection_time_s": float(total_action_selection_time_s),
+            "action_selection_time_per_step_ms": float(
+                1000.0 * total_action_selection_time_s / steps_f
+            ),
         }
     finally:
         env.close()
@@ -443,6 +451,14 @@ def _run_experiment(
             std_energy_cost_per_step=("energy_cost_per_step", "std"),
             mean_total_cost_per_step=("total_cost_per_step", "mean"),
             std_total_cost_per_step=("total_cost_per_step", "std"),
+            mean_action_selection_time_per_step_ms=(
+                "action_selection_time_per_step_ms",
+                "mean",
+            ),
+            std_action_selection_time_per_step_ms=(
+                "action_selection_time_per_step_ms",
+                "std",
+            ),
             mean_class_posterior_true=("class_posterior_true", "mean"),
             class_inference_accuracy=("class_inference_correct", "mean"),
         )
@@ -458,6 +474,13 @@ def _run_experiment(
     summary_df["ci95_active_sensors_per_step"] = (
         episodes_df.groupby(["selector", "lambda_energy"], sort=True)[
             "active_sensors_per_step"
+        ]
+        .apply(_ci95)
+        .values
+    )
+    summary_df["ci95_action_selection_time_per_step_ms"] = (
+        episodes_df.groupby(["selector", "lambda_energy"], sort=True)[
+            "action_selection_time_per_step_ms"
         ]
         .apply(_ci95)
         .values
@@ -690,7 +713,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--selector",
         type=str,
-        choices=["greedy", "random"],
+        choices=["greedy", "q_mdp", "random"],
         default="greedy",
         help="Sensor selection module to use.",
     )
