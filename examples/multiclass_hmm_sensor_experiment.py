@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import cProfile
 from dataclasses import dataclass
 import importlib.util
 import os
@@ -62,6 +63,9 @@ HMM = _load_hmm_class()
 class ExperimentConfig:
     selector_name: str
     max_active_sensors_cap: int
+    planning_horizon: int
+    mcts_iterations: int
+    mcts_max_actions: int
     lambda_values: tuple[float, ...]
     episodes_per_setting: int
     class_transition_probabilities: tuple[tuple[float, ...], ...]
@@ -243,6 +247,9 @@ def _run_single_episode(
     *,
     selector_name: str,
     max_active_sensors_cap: int,
+    planning_horizon: int,
+    mcts_iterations: int,
+    mcts_max_actions: int,
     class_idx: int,
     episode_seed: int,
     class_prior: tuple[float, ...],
@@ -330,6 +337,9 @@ def _run_single_episode(
                 hmm=hmm,
                 step_index=int(steps),
                 initial_true_state=int(initial_true_state),
+                planning_horizon=int(planning_horizon),
+                mcts_iterations=int(mcts_iterations),
+                mcts_max_actions=int(mcts_max_actions),
                 lambda_energy=float(lambda_energy),
                 sensor_energy_costs=sensor_energy_costs,
             )
@@ -363,6 +373,9 @@ def _run_single_episode(
         return {
             "selector": selector_name,
             "max_active_sensors_cap": int(k),
+            "planning_horizon": int(planning_horizon),
+            "mcts_iterations": int(mcts_iterations),
+            "mcts_max_actions": int(mcts_max_actions),
             "lambda_energy": float(lambda_energy),
             "episode_seed": int(episode_seed),
             "target_class_idx": true_class_idx,
@@ -420,6 +433,9 @@ def _run_experiment(
             row = _run_single_episode(
                 selector_name=config.selector_name,
                 max_active_sensors_cap=int(config.max_active_sensors_cap),
+                planning_horizon=int(config.planning_horizon),
+                mcts_iterations=int(config.mcts_iterations),
+                mcts_max_actions=int(config.mcts_max_actions),
                 class_idx=class_idx,
                 episode_seed=episode_seed,
                 class_prior=config.class_prior,
@@ -441,6 +457,9 @@ def _run_experiment(
         .agg(
             num_episodes=("episode_idx", "count"),
             max_active_sensors_cap=("max_active_sensors_cap", "first"),
+            planning_horizon=("planning_horizon", "first"),
+            mcts_iterations=("mcts_iterations", "first"),
+            mcts_max_actions=("mcts_max_actions", "first"),
             mean_steps_to_exit=("steps_to_exit", "mean"),
             std_steps_to_exit=("steps_to_exit", "std"),
             mean_active_sensors_per_step=("active_sensors_per_step", "mean"),
@@ -493,6 +512,9 @@ def _run_experiment(
         .agg(
             num_episodes=("episode_idx", "count"),
             max_active_sensors_cap=("max_active_sensors_cap", "first"),
+            planning_horizon=("planning_horizon", "first"),
+            mcts_iterations=("mcts_iterations", "first"),
+            mcts_max_actions=("mcts_max_actions", "first"),
             mean_tracking_error_per_step=("tracking_error_per_step", "mean"),
             mean_active_sensors_per_step=("active_sensors_per_step", "mean"),
             class_inference_accuracy=("class_inference_correct", "mean"),
@@ -565,6 +587,9 @@ def _compute_lower_bound_summary(
                 "lambda_energy": float(lam),
                 "num_episodes": 0,
                 "max_active_sensors_cap": int(config.max_active_sensors_cap),
+                "planning_horizon": int(config.planning_horizon),
+                "mcts_iterations": int(config.mcts_iterations),
+                "mcts_max_actions": int(config.mcts_max_actions),
                 "mean_steps_to_exit": wavg("expected_steps_to_exit"),
                 "std_steps_to_exit": 0.0,
                 "mean_active_sensors_per_step": wavg("mean_active_sensors_per_step"),
@@ -707,15 +732,40 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Multiclass target experiment with class priors, HMM state/mode tracking, "
-            "and pluggable sensor selectors (greedy or random)."
+            "and pluggable sensor selectors (greedy, q_mdp, mcts_oce, or random)."
         )
     )
     parser.add_argument(
         "--selector",
         type=str,
-        choices=["greedy", "q_mdp", "random"],
+        choices=[
+            "greedy",
+            "q_mdp",
+            "mcts_oce",
+            "mcts_oced",
+            "mcts_pomdp",
+            "random",
+        ],
         default="greedy",
         help="Sensor selection module to use.",
+    )
+    parser.add_argument(
+        "--planning-horizon",
+        type=int,
+        default=3,
+        help="Receding-horizon planning length used by lookahead selectors.",
+    )
+    parser.add_argument(
+        "--mcts-iterations",
+        type=int,
+        default=128,
+        help="MCTS simulation iterations per action selection.",
+    )
+    parser.add_argument(
+        "--mcts-max-actions",
+        type=int,
+        default=24,
+        help="Maximum candidate actions considered by MCTS-OCE.",
     )
     parser.add_argument(
         "--max-active-sensors",
@@ -798,6 +848,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip lower-bound generation and overlay.",
     )
+    parser.add_argument(
+        "--profile-cprofile",
+        type=Path,
+        default=None,
+        help=(
+            "Optional cProfile output path (.prof/.pstats) compatible with snakeviz. "
+            "If relative, it is resolved under --output-dir."
+        ),
+    )
     return parser
 
 
@@ -833,13 +892,26 @@ def main(argv: Iterable[str] | None = None) -> int:
     max_active_sensors_cap = int(max(k_values))
 
     lambda_values = _parse_lambda_values(args.lambda_values)
+    if int(args.planning_horizon) <= 0:
+        raise ValueError("planning_horizon must be >= 1")
+    if int(args.mcts_iterations) <= 0:
+        raise ValueError("mcts_iterations must be >= 1")
+    if int(args.mcts_max_actions) <= 0:
+        raise ValueError("mcts_max_actions must be >= 1")
 
     num_states = 42  # 41 network states + 1 exit state for Section II-A setup
     initial_belief = _parse_initial_belief(args.initial_belief, num_states=num_states)
 
+    selector_name = str(args.selector)
+    if selector_name == "mcts_oced":
+        selector_name = "mcts_oce"
+
     config = ExperimentConfig(
-        selector_name=str(args.selector),
+        selector_name=selector_name,
         max_active_sensors_cap=max_active_sensors_cap,
+        planning_horizon=int(args.planning_horizon),
+        mcts_iterations=int(args.mcts_iterations),
+        mcts_max_actions=int(args.mcts_max_actions),
         lambda_values=lambda_values,
         episodes_per_setting=int(args.episodes_per_setting),
         class_transition_probabilities=class_transition_probabilities,
@@ -853,17 +925,35 @@ def main(argv: Iterable[str] | None = None) -> int:
         write_lower_bound=not bool(args.skip_lower_bound),
     )
 
-    episodes_df, summary_df, class_summary_df = _run_experiment(config)
-    lower_bound_summary_df = None
-    if config.write_lower_bound:
-        lower_bound_summary_df = _compute_lower_bound_summary(config)
-    _write_outputs(
-        config=config,
-        episodes_df=episodes_df,
-        summary_df=summary_df,
-        class_summary_df=class_summary_df,
-        lower_bound_summary_df=lower_bound_summary_df,
-    )
+    profiler = None
+    if args.profile_cprofile is not None:
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+    try:
+        episodes_df, summary_df, class_summary_df = _run_experiment(config)
+        lower_bound_summary_df = None
+        if config.write_lower_bound:
+            lower_bound_summary_df = _compute_lower_bound_summary(config)
+        _write_outputs(
+            config=config,
+            episodes_df=episodes_df,
+            summary_df=summary_df,
+            class_summary_df=class_summary_df,
+            lower_bound_summary_df=lower_bound_summary_df,
+        )
+    finally:
+        if profiler is not None:
+            profiler.disable()
+            profile_path = Path(args.profile_cprofile)
+            if profile_path.suffix == "":
+                profile_path = profile_path.with_suffix(".prof")
+            if not profile_path.is_absolute():
+                profile_path = config.output_dir / profile_path
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profiler.dump_stats(str(profile_path))
+            print(f"Wrote cProfile stats: {profile_path}")
+            print(f"Open with: snakeviz {profile_path}")
 
     stem = f"multiclass_hmm_{config.selector_name}"
     print(f"Wrote episode CSV: {config.output_dir / f'{stem}_episode_stats.csv'}")

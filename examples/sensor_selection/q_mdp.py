@@ -103,6 +103,9 @@ def select_sensors(
     hmm=None,
     step_index: int | None = None,
     initial_true_state: int | None = None,
+    planning_horizon: int | None = None,
+    mcts_iterations: int | None = None,
+    mcts_max_actions: int | None = None,
     lambda_energy: float | None = None,
     sensor_energy_costs: np.ndarray | None = None,
 ) -> np.ndarray:
@@ -120,6 +123,9 @@ def select_sensors(
     del rng
     del step_index
     del initial_true_state
+    del planning_horizon
+    del mcts_iterations
+    del mcts_max_actions
 
     num_sensors = int(coverage_matrix.shape[0])
     k = max(0, min(int(max_active_sensors), num_sensors))
