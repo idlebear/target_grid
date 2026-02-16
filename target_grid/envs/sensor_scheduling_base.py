@@ -4,7 +4,7 @@ Shared base class for sensor scheduling environments.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -47,6 +47,8 @@ class SensorSchedulingBaseEnv(gym.Env):
         sample_initial_state_from_belief: bool = False,
         true_state_in_info: bool = False,
         obstacle_grid: np.ndarray | None = None,
+        occlude_sensors: bool = False,
+        dynamic_coverage_fn: Callable[[np.ndarray], np.ndarray] | None = None,
         screen_width: int = DEFAULT_SCREEN_WIDTH,
         screen_height: int = DEFAULT_SCREEN_HEIGHT,
         render_mode: str | None = None,
@@ -75,11 +77,13 @@ class SensorSchedulingBaseEnv(gym.Env):
         self.num_sensors = len(self.sensors)
         if self.num_sensors <= 0:
             raise ValueError("at least one sensor is required")
-        self.coverage_matrix = np.asarray(coverage_matrix, dtype=bool)
-        if self.coverage_matrix.shape != (self.num_sensors, self.num_states):
+        self.base_coverage_matrix = np.asarray(coverage_matrix, dtype=np.float32)
+        if self.base_coverage_matrix.shape != (self.num_sensors, self.num_states):
             raise ValueError(
                 "coverage_matrix must have shape (num_sensors, num_states)"
             )
+        self.base_coverage_matrix = np.clip(self.base_coverage_matrix, 0.0, 1.0)
+        self.coverage_matrix = self.base_coverage_matrix.copy()
 
         self.num_targets = int(num_targets)
         if self.num_targets <= 0:
@@ -109,6 +113,8 @@ class SensorSchedulingBaseEnv(gym.Env):
             )
         self.gaussian_sigma = float(gaussian_sigma)
         self.true_state_in_info = bool(true_state_in_info)
+        self.occlude_sensors = bool(occlude_sensors)
+        self._dynamic_coverage_fn = dynamic_coverage_fn
 
         self._state_lookup = {
             (int(self.state_coords[idx, 0]), int(self.state_coords[idx, 1])): idx
@@ -181,6 +187,107 @@ class SensorSchedulingBaseEnv(gym.Env):
         self._truncated = False
         self.window: Window | None = None
         self._warned_human_unavailable = False
+
+    def _occluder_state_indices(self) -> np.ndarray:
+        if not self.occlude_sensors:
+            return np.empty((0,), dtype=np.int32)
+        out: list[int] = []
+        rows = cols = 0
+        if self.obstacle_grid is not None:
+            rows, cols = self.obstacle_grid.shape
+        for s in self.target_states:
+            idx = int(s)
+            if idx < 0 or idx >= self.num_states:
+                continue
+            x = int(self.state_coords[idx, 0])
+            y = int(self.state_coords[idx, 1])
+            # Skip non-physical states (e.g. synthetic exit nodes).
+            if self.obstacle_grid is not None and not (0 <= x < cols and 0 <= y < rows):
+                continue
+            out.append(idx)
+        if len(out) == 0:
+            return np.empty((0,), dtype=np.int32)
+        return np.asarray(sorted(set(out)), dtype=np.int32)
+
+    def _build_measurement_target_occupancy(self) -> np.ndarray | None:
+        if self.obstacle_grid is None:
+            return None
+        blocker = np.zeros_like(self.obstacle_grid, dtype=np.float32)
+        occ_states = self._occluder_state_indices()
+        if occ_states.size == 0:
+            return blocker
+        rows, cols = blocker.shape
+        for idx in occ_states:
+            x = int(self.state_coords[idx, 0])
+            y = int(self.state_coords[idx, 1])
+            if 0 <= x < cols and 0 <= y < rows:
+                blocker[y, x] = 1
+        return blocker
+
+    def _build_prediction_target_occupancy(
+        self,
+        predicted_belief: np.ndarray,
+    ) -> np.ndarray | None:
+        if self.obstacle_grid is None:
+            return None
+        if predicted_belief.shape != (self.num_targets, self.num_states):
+            raise ValueError(
+                "predicted_belief must have shape (num_targets, num_states)"
+            )
+        rows, cols = self.obstacle_grid.shape
+        valid_state_mask = (
+            (self.state_coords[:, 0] >= 0)
+            & (self.state_coords[:, 0] < cols)
+            & (self.state_coords[:, 1] >= 0)
+            & (self.state_coords[:, 1] < rows)
+        )
+        if not np.any(valid_state_mask):
+            return np.zeros_like(self.obstacle_grid, dtype=np.float32)
+
+        xs = self.state_coords[valid_state_mask, 0].astype(np.int32)
+        ys = self.state_coords[valid_state_mask, 1].astype(np.int32)
+        no_target_occupancy = np.ones((rows, cols), dtype=np.float32)
+        for target_idx in range(self.num_targets):
+            target_grid = np.zeros((rows, cols), dtype=np.float32)
+            target_probs = np.asarray(
+                predicted_belief[target_idx, valid_state_mask], dtype=np.float32
+            )
+            np.add.at(target_grid, (ys, xs), target_probs)
+            np.clip(target_grid, 0.0, 1.0, out=target_grid)
+            no_target_occupancy *= 1.0 - target_grid
+
+        return np.clip(1.0 - no_target_occupancy, 0.0, 1.0)
+
+    def _dynamic_coverage_from_target_occupancy(
+        self, target_occupancy: np.ndarray | None
+    ) -> np.ndarray:
+        if (
+            not self.occlude_sensors
+            or self._dynamic_coverage_fn is None
+            or target_occupancy is None
+            or not np.any(target_occupancy)
+        ):
+            return self.base_coverage_matrix.copy()
+
+        dynamic = np.asarray(
+            self._dynamic_coverage_fn(np.asarray(target_occupancy, dtype=np.float32)),
+            dtype=np.float32,
+        )
+        if dynamic.shape != (self.num_sensors, self.num_states):
+            raise ValueError(
+                "dynamic coverage matrix must have shape (num_sensors, num_states)"
+            )
+        return np.clip(dynamic, 0.0, 1.0)
+
+    def _prediction_coverage_matrix(self, predicted_belief: np.ndarray) -> np.ndarray:
+        target_occupancy = self._build_prediction_target_occupancy(predicted_belief)
+        return self._dynamic_coverage_from_target_occupancy(target_occupancy)
+
+    def _refresh_coverage_matrix(self) -> None:
+        target_occupancy = self._build_measurement_target_occupancy()
+        self.coverage_matrix[:, :] = self._dynamic_coverage_from_target_occupancy(
+            target_occupancy
+        )
 
     def _coerce_state_value(self, value: Any) -> int:
         if isinstance(value, (int, np.integer)):
@@ -289,7 +396,10 @@ class SensorSchedulingBaseEnv(gym.Env):
             for sensor_idx in range(self.num_sensors):
                 if action[sensor_idx] == 0:
                     continue
-                if not self.coverage_matrix[sensor_idx, true_state]:
+                vis_prob = float(self.coverage_matrix[sensor_idx, true_state])
+                if vis_prob <= 0.0:
+                    continue
+                if self.np_random.random() > vis_prob:
                     continue
                 valid[k, sensor_idx] = 1
                 if self.observation_mode == "discrete":
@@ -297,7 +407,7 @@ class SensorSchedulingBaseEnv(gym.Env):
                         measurements[k, sensor_idx] = float(true_state)
                     else:
                         covered_states = np.flatnonzero(
-                            self.coverage_matrix[sensor_idx, :]
+                            self.coverage_matrix[sensor_idx, :] > 1e-8
                         )
                         if covered_states.size <= 1:
                             measured_state = true_state
@@ -326,55 +436,66 @@ class SensorSchedulingBaseEnv(gym.Env):
         measurement_valid: np.ndarray,
     ) -> None:
         eps = 1e-12
+        predicted_belief = np.zeros_like(self.belief)
+        for k in range(self.num_targets):
+            if self.absorbed_mask[k]:
+                predicted_belief[k, :] = 0.0
+                predicted_belief[k, int(self.target_states[k])] = 1.0
+            else:
+                predicted_belief[k, :] = self.belief[k, :] @ self.transition_matrix
+
+        prediction_coverage = self._prediction_coverage_matrix(predicted_belief)
         for k in range(self.num_targets):
             if self.absorbed_mask[k]:
                 # absorbed targets are fully known and no longer evolve
-                self.belief[k, :] = 0.0
-                self.belief[k, int(self.target_states[k])] = 1.0
+                self.belief[k, :] = predicted_belief[k, :]
                 continue
 
-            pred = self.belief[k, :] @ self.transition_matrix
+            pred = predicted_belief[k, :]
             like = np.ones((self.num_states,), dtype=np.float64)
 
             for sensor_idx in range(self.num_sensors):
                 if action[sensor_idx] == 0:
                     continue
 
-                covered = self.coverage_matrix[sensor_idx, :]
+                covered_prob = np.asarray(
+                    prediction_coverage[sensor_idx, :], dtype=np.float64
+                )
+                covered_prob = np.clip(covered_prob, 0.0, 1.0)
+                covered = covered_prob > 1e-8
                 is_valid = bool(measurement_valid[k, sensor_idx])
                 meas = float(measurements[k, sensor_idx])
 
                 if self.observation_mode == "discrete":
                     if not is_valid:
-                        sensor_like = np.where(covered, 0.0, 1.0)
+                        sensor_like = 1.0 - covered_prob
                     else:
                         state_idx = int(round(meas))
                         sensor_like = np.zeros((self.num_states,), dtype=np.float64)
                         if self.discrete_sensor_model == "simple":
-                            if (
-                                0 <= state_idx < self.num_states
-                                and covered[state_idx]
-                            ):
-                                sensor_like[state_idx] = 1.0
+                            if 0 <= state_idx < self.num_states:
+                                sensor_like[state_idx] = covered_prob[state_idx]
                         else:
                             covered_states = np.flatnonzero(covered)
                             if covered_states.size == 1:
                                 only = int(covered_states[0])
                                 if state_idx == only:
-                                    sensor_like[only] = 1.0
+                                    sensor_like[only] = covered_prob[only]
                             elif covered_states.size > 1:
                                 p = self.probabilistic_observation_correct_prob
                                 miss = (1.0 - p) / float(covered_states.size - 1)
-                                sensor_like[covered_states] = miss
+                                sensor_like[covered_states] = (
+                                    covered_prob[covered_states] * miss
+                                )
                                 if (
                                     0 <= state_idx < self.num_states
                                     and covered[state_idx]
                                 ):
-                                    sensor_like[state_idx] = p
+                                    sensor_like[state_idx] = covered_prob[state_idx] * p
                     like *= sensor_like
                 else:
                     if not is_valid:
-                        sensor_like = np.where(covered, 0.0, 1.0)
+                        sensor_like = 1.0 - covered_prob
                     else:
                         means = np.array(
                             [
@@ -384,7 +505,7 @@ class SensorSchedulingBaseEnv(gym.Env):
                             dtype=np.float64,
                         )
                         sensor_like = _gaussian_pdf(meas, means, self.gaussian_sigma)
-                        sensor_like = np.where(covered, sensor_like, 0.0)
+                        sensor_like = sensor_like * covered_prob
                     like *= sensor_like
 
             post = pred * like
@@ -412,7 +533,7 @@ class SensorSchedulingBaseEnv(gym.Env):
                 seen = bool(
                     np.any(
                         (self.last_action > 0)
-                        & self.coverage_matrix[:, true_state].astype(np.int8)
+                        & (self.last_measurement_valid[k, :] > 0)
                     )
                 )
                 per_target[k] = 0.0 if seen else 1.0
@@ -454,6 +575,7 @@ class SensorSchedulingBaseEnv(gym.Env):
             "total_cost": float(energy_cost + tracking_cost),
             "num_active_sensors": int(np.sum(self.last_action)),
             "absorbed_mask": self.absorbed_mask.astype(np.int8).copy(),
+            "occlude_sensors": bool(self.occlude_sensors),
         }
         if self.true_state_in_info:
             info["true_state"] = self.target_states.astype(np.int32).copy()
@@ -506,6 +628,8 @@ class SensorSchedulingBaseEnv(gym.Env):
                 self.belief[k, :] = 0.0
                 self.belief[k, int(self.target_states[k])] = 1.0
 
+        self._refresh_coverage_matrix()
+
         self.last_action[:] = 0
         self.last_measurements[:, :] = 0.0
         self.last_measurement_valid[:, :] = 0
@@ -556,6 +680,7 @@ class SensorSchedulingBaseEnv(gym.Env):
             if nxt in self.absorbing_states:
                 self.absorbed_mask[k] = 1
 
+        self._refresh_coverage_matrix()
         measurements, valid = self._generate_measurements(a)
         self.last_measurements[:, :] = measurements
         self.last_measurement_valid[:, :] = valid
@@ -625,7 +750,7 @@ class SensorSchedulingBaseEnv(gym.Env):
         # Highlight cells covered by at least one currently active sensor.
         active_sensor_idx = np.where(self.last_action > 0)[0]
         if len(active_sensor_idx) > 0:
-            covered = np.any(self.coverage_matrix[active_sensor_idx, :], axis=0)
+            covered = np.any(self.coverage_matrix[active_sensor_idx, :] > 1e-8, axis=0)
             for state_idx, is_covered in enumerate(covered):
                 if not is_covered:
                     continue

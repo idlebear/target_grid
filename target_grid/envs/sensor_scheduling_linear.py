@@ -41,6 +41,7 @@ DEFAULT_LINEAR_PARAMETERS = {
     "sample_initial_state_from_belief": False,
     "initial_belief": "uniform",
     "true_state_in_info": False,
+    "occlude_sensors": False,
     "screen_width": DEFAULT_SCREEN_WIDTH,
     "screen_height": DEFAULT_SCREEN_HEIGHT,
 }
@@ -320,6 +321,7 @@ class SensorSchedulingLinearEnv(SensorSchedulingBaseEnv):
             sample_initial_state_from_belief=sample_initial_from_belief,
             true_state_in_info=bool(params["true_state_in_info"]),
             obstacle_grid=np.zeros((1, num_states), dtype=np.int8),
+            occlude_sensors=bool(params.get("occlude_sensors", False)),
             screen_width=int(params["screen_width"]),
             screen_height=int(params["screen_height"]),
             render_mode=render_mode,

@@ -367,7 +367,20 @@ def _generate_candidate_actions(
     max_actions: int = 24,
 ) -> list[np.ndarray]:
     num_sensors = int(coverage_matrix.shape[0])
+    num_states = int(coverage_matrix.shape[1])
     k = max(0, min(int(max_active_sensors), num_sensors))
+    k_eff = k
+    if lambda_energy is not None and k > 0:
+        # Coverage mass is upper-bounded by 1.0; if even the cheapest r sensors
+        # cost more than that bound, those large-cardinality actions are poor
+        # candidates in high-lambda regimes.
+        sorted_costs = np.sort(np.asarray(sensor_energy_costs, dtype=np.float64))
+        cum_costs = np.cumsum(sorted_costs)
+        affordable = np.flatnonzero(float(lambda_energy) * cum_costs <= 1.0 + 1e-9)
+        if affordable.size == 0:
+            k_eff = 0
+        else:
+            k_eff = min(k, int(affordable[-1]) + 1)
 
     scores = coverage_matrix.astype(np.float64) @ predicted_state
     if lambda_energy is None:
@@ -375,10 +388,10 @@ def _generate_candidate_actions(
     else:
         net_scores = scores - float(lambda_energy) * sensor_energy_costs
 
-    sizes = sorted(set([0, 1, 2, 3, 4, 8, k]))
-    sizes = [s for s in sizes if 0 <= s <= k]
-    if k <= 4:
-        sizes = list(range(0, k + 1))
+    sizes = sorted(set([0, 1, 2, 3, 4, 8, k_eff]))
+    sizes = [s for s in sizes if 0 <= s <= k_eff]
+    if k_eff <= 4:
+        sizes = list(range(0, k_eff + 1))
 
     actions: list[np.ndarray] = []
     seen: set[bytes] = set()
@@ -403,6 +416,44 @@ def _generate_candidate_actions(
         )
         return covered_mass - energy_term
 
+    def greedy_action_of_size(r: int) -> np.ndarray:
+        if r <= 0:
+            return np.zeros((num_sensors,), dtype=np.int8)
+        covered = np.zeros((num_states,), dtype=bool)
+        remaining = np.ones((num_sensors,), dtype=bool)
+        selected: list[int] = []
+        for _ in range(r):
+            best_idx = -1
+            best_gain = -np.inf
+            candidate_indices = np.flatnonzero(remaining)
+            if candidate_indices.size == 0:
+                break
+            for idx in candidate_indices:
+                new_cov = coverage_matrix[int(idx), :] & (~covered)
+                marginal_gain = float(np.sum(predicted_state[new_cov]))
+                energy_term = (
+                    float(lambda_energy) * float(sensor_energy_costs[int(idx)])
+                    if lambda_energy is not None
+                    else 0.0
+                )
+                gain = marginal_gain - energy_term
+                if gain > best_gain:
+                    best_gain = gain
+                    best_idx = int(idx)
+            if best_idx < 0:
+                break
+            selected.append(best_idx)
+            covered |= coverage_matrix[best_idx, :]
+            remaining[best_idx] = False
+
+        if len(selected) < r:
+            leftovers = np.flatnonzero(remaining)
+            if leftovers.size > 0:
+                need = min(r - len(selected), int(leftovers.size))
+                filler = leftovers[np.argsort(-net_scores[leftovers], kind="stable")[:need]]
+                selected.extend([int(i) for i in filler])
+        return _build_action_vector(num_sensors, np.asarray(sorted(selected), dtype=np.int32))
+
     add_action(np.zeros((num_sensors,), dtype=np.int8))
 
     for r in sizes:
@@ -413,6 +464,7 @@ def _generate_candidate_actions(
 
         top_net_idx = np.argsort(-net_scores, kind="stable")[:r]
         add_action(_build_action_vector(num_sensors, top_net_idx))
+        add_action(greedy_action_of_size(r))
 
         for _ in range(2):
             rnd_idx = np.sort(rng.choice(num_sensors, size=r, replace=False))
@@ -422,12 +474,15 @@ def _generate_candidate_actions(
     # can still discover good 1/2-sensor solutions.
     top_small = min(num_sensors, 10)
     sensor_order = np.argsort(-net_scores, kind="stable")[:top_small]
-    for idx in sensor_order:
-        add_action(_build_action_vector(num_sensors, np.asarray([idx], dtype=np.int32)))
+    if k_eff >= 1:
+        for idx in sensor_order:
+            add_action(
+                _build_action_vector(num_sensors, np.asarray([idx], dtype=np.int32))
+            )
 
     pair_pool = min(top_small, 8)
     pair_candidates: list[tuple[float, np.ndarray]] = []
-    if pair_pool >= 2:
+    if k_eff >= 2 and pair_pool >= 2:
         top_pair_sensors = sensor_order[:pair_pool]
         for i in range(pair_pool):
             si = int(top_pair_sensors[i])
@@ -440,11 +495,11 @@ def _generate_candidate_actions(
         for _, a in pair_candidates[: min(12, len(pair_candidates))]:
             add_action(a)
 
-    if k > 0:
+    if k_eff > 0:
         positive = np.flatnonzero(net_scores > 0.0)
         if positive.size > 0:
-            if positive.size > k:
-                keep = positive[np.argsort(-net_scores[positive], kind="stable")[:k]]
+            if positive.size > k_eff:
+                keep = positive[np.argsort(-net_scores[positive], kind="stable")[:k_eff]]
             else:
                 keep = positive
             add_action(_build_action_vector(num_sensors, np.sort(keep)))
@@ -453,37 +508,38 @@ def _generate_candidate_actions(
     if len(ranked) <= max_actions:
         return ranked
 
-    # Preserve low-cardinality diversity so MCTS can explore small awake sets.
-    required_sizes = [s for s in (0, 1, 2, 3) if s <= k]
-    # Keep multiple 1/2-sensor candidates when possible.
-    size_quota = {0: 1, 1: 3, 2: 4, 3: 2}
+    # Preserve cardinality diversity with round-robin truncation, otherwise
+    # progressive widening can collapse to a narrow size band.
+    by_size: dict[int, list[np.ndarray]] = {}
+    for a in ranked:
+        s = int(np.sum(a))
+        by_size.setdefault(s, []).append(a)
+
+    # Include a broad range of sizes first; then fill by score.
+    base_sizes = [s for s in (0, 1, 2, 3, 4, 5, 6, 8, k_eff) if s in by_size]
+    extra_sizes = [s for s in sorted(by_size.keys()) if s not in base_sizes]
+    size_order = base_sizes + extra_sizes
+
     kept: list[np.ndarray] = []
-    seen: set[bytes] = set()
-    kept_per_size = {s: 0 for s in required_sizes}
-
-    for a in ranked:
-        size = int(np.sum(a))
-        if size not in kept_per_size:
-            continue
-        quota = int(size_quota.get(size, 1))
-        if kept_per_size[size] >= quota:
-            continue
-        key = a.tobytes()
-        if key in seen:
-            continue
-        kept.append(a)
-        seen.add(key)
-        kept_per_size[size] += 1
-        if len(kept) >= max_actions:
-            return kept[:max_actions]
-
-    for a in ranked:
-        key = a.tobytes()
-        if key in seen:
-            continue
-        kept.append(a)
-        seen.add(key)
-        if len(kept) >= max_actions:
+    kept_keys: set[bytes] = set()
+    ptr = {s: 0 for s in size_order}
+    while len(kept) < max_actions:
+        progressed = False
+        for s in size_order:
+            i = ptr[s]
+            if i >= len(by_size[s]):
+                continue
+            a = by_size[s][i]
+            ptr[s] += 1
+            key = a.tobytes()
+            if key in kept_keys:
+                continue
+            kept.append(a)
+            kept_keys.add(key)
+            progressed = True
+            if len(kept) >= max_actions:
+                break
+        if not progressed:
             break
     return kept[:max_actions]
 

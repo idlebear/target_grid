@@ -43,6 +43,7 @@ DEFAULT_GRID_PARAMETERS = {
     "sample_initial_state_from_belief": False,
     "initial_belief": "uniform",
     "true_state_in_info": False,
+    "occlude_sensors": False,
     "screen_width": DEFAULT_SCREEN_WIDTH,
     "screen_height": DEFAULT_SCREEN_HEIGHT,
 }
@@ -159,7 +160,8 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
                 obstacle_grid=grid_data,
             )
         else:
-            coverage = np.asarray(sensor_visibility, dtype=bool)
+            coverage = np.asarray(sensor_visibility, dtype=np.float32)
+            coverage = np.clip(coverage, 0.0, 1.0)
             if coverage.shape not in {
                 (len(sensors), num_network_states),
                 (len(sensors), num_states),
@@ -171,8 +173,26 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
                 )
         if add_exit_state and coverage.shape[1] == num_network_states:
             coverage = np.concatenate(
-                [coverage, np.zeros((len(sensors), 1), dtype=bool)], axis=1
+                [coverage, np.zeros((len(sensors), 1), dtype=np.float32)], axis=1
             )
+
+        def _dynamic_coverage_from_occupancy(
+            target_occupancy: np.ndarray,
+        ) -> np.ndarray:
+            dynamic_obstacles = np.maximum(
+                grid_data.astype(np.float32),
+                np.asarray(target_occupancy, dtype=np.float32),
+            )
+            dynamic = compute_grid_coverage_matrix(
+                sensors=sensors,
+                state_coords=network_state_coords,
+                obstacle_grid=dynamic_obstacles,
+            )
+            if add_exit_state:
+                dynamic = np.concatenate(
+                    [dynamic, np.zeros((len(sensors), 1), dtype=np.float32)], axis=1
+                )
+            return dynamic
 
         initial_target_states = params.get("initial_target_states", None)
         if initial_target_states is not None:
@@ -213,6 +233,8 @@ class SensorSchedulingGridEnv(SensorSchedulingBaseEnv):
             ),
             true_state_in_info=bool(params["true_state_in_info"]),
             obstacle_grid=grid_data,
+            occlude_sensors=bool(params.get("occlude_sensors", False)),
+            dynamic_coverage_fn=_dynamic_coverage_from_occupancy,
             screen_width=int(params["screen_width"]),
             screen_height=int(params["screen_height"]),
             render_mode=render_mode,

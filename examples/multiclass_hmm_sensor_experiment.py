@@ -292,7 +292,8 @@ def _run_single_episode(
         del info
         unwrapped = env.unwrapped
         initial_true_state = int(unwrapped.target_states[0])
-        coverage_matrix = np.asarray(unwrapped.coverage_matrix, dtype=bool)
+        dynamic_sensor_occlusion = bool(getattr(unwrapped, "occlude_sensors", False))
+        static_coverage_matrix = np.asarray(unwrapped.coverage_matrix, dtype=bool)
         num_states = int(unwrapped.num_states)
         num_sensors = int(unwrapped.num_sensors)
         k = max(0, min(int(max_active_sensors_cap), num_sensors))
@@ -328,6 +329,11 @@ def _run_single_episode(
         terminated = False
         truncated = False
         while not (terminated or truncated):
+            if dynamic_sensor_occlusion:
+                coverage_matrix = np.asarray(unwrapped.coverage_matrix, dtype=bool)
+            else:
+                coverage_matrix = static_coverage_matrix
+
             t0 = perf_counter()
             action = selector_fn(
                 np.asarray(hmm.state_distribution, dtype=np.float64).copy(),
@@ -354,7 +360,12 @@ def _run_single_episode(
             total_active_sensors += float(info["num_active_sensors"])
 
             observation_idx = _extract_observation_index(obs, num_states)
-            emission = _build_emission_matrix_for_action(action, coverage_matrix)
+            if dynamic_sensor_occlusion:
+                # Measurement was generated using the post-transition dynamic coverage.
+                emission_coverage = np.asarray(unwrapped.coverage_matrix, dtype=bool)
+            else:
+                emission_coverage = static_coverage_matrix
+            emission = _build_emission_matrix_for_action(action, emission_coverage)
             hmm.forward_step(
                 observation=int(observation_idx),
                 emission_probabilities=emission,

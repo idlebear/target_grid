@@ -10,9 +10,9 @@ import numpy as np
 
 
 try:
-    from polycheck import visibility_from_region
+    from polycheck import sensor_visibility_from_region
 except Exception:  # pragma: no cover - optional dependency may fail at import/runtime
-    visibility_from_region = None
+    sensor_visibility_from_region = None
 
 
 def _normalize_angle_deg(angle: float) -> float:
@@ -118,6 +118,10 @@ def _fallback_visibility(
     rows, cols = obstacle_grid.shape
     out = np.zeros((len(ends),), dtype=float)
 
+    print(
+        "WARNING: Using fallback visibility implementation. Install polycheck for better performance."
+    )
+
     for idx, (x1, y1) in enumerate(ends):
         x0, y0 = start
         if x1 < 0 or x1 >= cols or y1 < 0 or y1 >= rows:
@@ -132,10 +136,10 @@ def _fallback_visibility(
         x, y = x0, y0
         visible = True
         while True:
+            if (x, y) == (x1, y1):
+                break
             if (x, y) != (x0, y0) and obstacle_grid[y, x] != 0:
                 visible = False
-                break
-            if (x, y) == (x1, y1):
                 break
             e2 = 2 * err
             if e2 > -dy:
@@ -149,38 +153,60 @@ def _fallback_visibility(
     return out
 
 
+def _sensor_specs_to_polycheck_array(sensors: Sequence[SensorSpec]) -> np.ndarray:
+    sensor_array = np.zeros((len(sensors), 5), dtype=np.float32)
+    for sensor_idx, sensor in enumerate(sensors):
+        sensor_range = float(sensor.range)
+        if sensor_range < 0.0:
+            sensor_range = 0.0
+        sensor_array[sensor_idx, 0] = float(sensor.location[0])
+        sensor_array[sensor_idx, 1] = float(sensor.location[1])
+        sensor_array[sensor_idx, 2] = np.float32(sensor_range)
+        sensor_array[sensor_idx, 3] = np.float32(np.deg2rad(sensor.direction_deg))
+        sensor_array[sensor_idx, 4] = np.float32(np.deg2rad(sensor.fov_deg))
+    return sensor_array
+
+
 def compute_grid_coverage_matrix(
     sensors: Sequence[SensorSpec],
     state_coords: np.ndarray,
     obstacle_grid: np.ndarray,
 ) -> np.ndarray:
     """
-    Compute a boolean matrix M where M[i, j] indicates whether sensor i can
-    observe state j given range, FOV, direction, and obstacle occlusion.
+    Compute visibility probabilities M where M[i, j] is the probability that
+    sensor i can observe state j given range, FOV, direction, and occupancy.
     """
     num_sensors = len(sensors)
     num_states = state_coords.shape[0]
-    coverage = np.zeros((num_sensors, num_states), dtype=bool)
+    coverage = np.zeros((num_sensors, num_states), dtype=np.float32)
+    if num_sensors == 0 or num_states == 0:
+        return coverage
 
-    rows, cols = obstacle_grid.shape
+    occupancy_grid = np.asarray(obstacle_grid, dtype=np.float32)
+    occupancy_grid = np.clip(occupancy_grid, 0.0, 1.0)
+    rows, cols = occupancy_grid.shape
     ends = np.array([[x, y] for y in range(rows) for x in range(cols)], dtype=int)
+    xs = state_coords[:, 0].astype(np.int32)
+    ys = state_coords[:, 1].astype(np.int32)
+    valid_state_mask = (xs >= 0) & (xs < cols) & (ys >= 0) & (ys < rows)
+
+    if sensor_visibility_from_region is not None:
+        sensor_data = _sensor_specs_to_polycheck_array(sensors)
+        per_sensor_visibility, _ = sensor_visibility_from_region(
+            occupancy_grid, sensor_data
+        )
+        valid_x = xs[valid_state_mask]
+        valid_y = ys[valid_state_mask]
+        coverage[:, valid_state_mask] = per_sensor_visibility[:, valid_y, valid_x]
+        np.clip(coverage, 0.0, 1.0, out=coverage)
+        return coverage
+
     state_index = {
-        (int(state_coords[j, 0]), int(state_coords[j, 1])): j for j in range(num_states)
+        (int(xs[j]), int(ys[j])): j for j in np.flatnonzero(valid_state_mask)
     }
-
-    for sensor_idx, sensor in enumerate(sensors):
+    for sensor_idx, sensor in enumerate(sensors):  # pragma: no cover
         sx, sy = sensor.location
-
-        if visibility_from_region is not None:
-            vis = visibility_from_region(
-                data=obstacle_grid.astype(np.int32),
-                starts=np.array([[sx, sy]], dtype=int),
-                ends=ends,
-                max_range=None if np.isinf(sensor.range) else float(sensor.range),
-            ).reshape(rows, cols)
-        else:  # pragma: no cover - used only when polycheck is unavailable
-            vis = _fallback_visibility(obstacle_grid, (sx, sy), ends).reshape(rows, cols)
-
+        vis = _fallback_visibility(occupancy_grid, (sx, sy), ends).reshape(rows, cols)
         for x, y in state_index:
             if vis[y, x] <= 0.0:
                 continue
@@ -196,7 +222,7 @@ def compute_grid_coverage_matrix(
                 fov_deg=sensor.fov_deg,
             ):
                 continue
-            coverage[sensor_idx, state_index[(x, y)]] = True
+            coverage[sensor_idx, state_index[(x, y)]] = 1.0
 
     return coverage
 
