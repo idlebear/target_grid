@@ -236,3 +236,8 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,c++,cuda
 results/
 render/
+examples/results.no-budget/comparative/comparative_combined_class_summary.csv
+
+# generated data files
+.csv
+.pdf
