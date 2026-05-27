@@ -40,6 +40,9 @@ DEFAULT_WORLD_PARAMETERS = {
     "agent": None,
     "max_steps": DEFAULT_MAX_STEP,
     "view_range": None,
+    "observation_interval": 1,
+    "sensor_noise_fn": None,
+    "sensor_noise_kwargs": {},
     "screen_width": DEFAULT_SCREEN_WIDTH,
     "screen_height": DEFAULT_SCREEN_HEIGHT,
 }
@@ -80,6 +83,9 @@ class TargetWorldEnv(gym.Env):
         self.screen_width = params["screen_width"]
         self.screen_height = params["screen_height"]
         self.view_range = params["view_range"]
+        self.observation_interval = max(1, int(params.get("observation_interval", 1)))
+        self.sensor_noise_fn = params.get("sensor_noise_fn", None)
+        self.sensor_noise_kwargs = dict(params.get("sensor_noise_kwargs", {}))
 
         assert self.grid_data is None or (
             np.max(self.grid_data) <= 1 and np.min(self.grid_data) >= 0
@@ -135,6 +141,9 @@ class TargetWorldEnv(gym.Env):
         self.window = None
         self.clock = None
         self.visibility_cache = {}
+        self.current_observation_available = True
+        self.current_target_observations = []
+        self.current_target_observation_model = None
 
     def _visibility_fn(self, x):
         """
@@ -187,6 +196,49 @@ class TargetWorldEnv(gym.Env):
 
     def get_graph(self):
         return self.graph
+
+    def _observation_available(self):
+        return (self.steps % self.observation_interval) == 0
+
+    def _build_sensor_model(self):
+        if self.sensor_noise_fn is None:
+            return None
+
+        I_occ = (1.0 - np.asarray(self.current_visibility, dtype=float)).reshape(-1)
+        return self.sensor_noise_fn(
+            height=self.size,
+            width=self.size,
+            I_occ=I_occ,
+            sensor_pos=tuple(self.agent.node),
+            **self.sensor_noise_kwargs,
+        )
+
+    def _sample_target_observations(self, observation_available):
+        if not observation_available:
+            self.current_target_observation_model = None
+            return [None for _ in self.targets]
+
+        sensor_model = self._build_sensor_model()
+        self.current_target_observation_model = sensor_model
+        observations = []
+        for target in self.targets:
+            if sensor_model is None:
+                if self.current_visibility[target.node[1], target.node[0]]:
+                    observations.append(tuple(target.node))
+                else:
+                    observations.append(None)
+                continue
+
+            true_state = self.graph.linear_index(tuple(target.node))
+            observation_idx = int(
+                self.rng.choice(sensor_model.shape[1], p=sensor_model[true_state])
+            )
+            if observation_idx == sensor_model.shape[1] - 1:
+                observations.append(None)
+            else:
+                observations.append(tuple(self.graph.grid_index(observation_idx)))
+
+        return observations
 
     def add_wall(self, pos):
         self.grid_data[pos(1), pos(0)] = 1
@@ -284,8 +336,15 @@ class TargetWorldEnv(gym.Env):
             )
         return target
 
-    def _get_obs(self):
+    def _get_obs(self, observation_available=None):
+        if observation_available is None:
+            observation_available = self._observation_available()
+        self.current_observation_available = bool(observation_available)
         self.current_visibility = self._visibility_fn(self.agent.node)
+        target_nodes = self._sample_target_observations(
+            self.current_observation_available
+        )
+        self.current_target_observations = list(target_nodes)
 
         obs_data = np.zeros((3, self.size, self.size), dtype=float)
         obs_data[0, :, :] = self.current_visibility * GridState.OCCLUDED.value
@@ -300,15 +359,11 @@ class TargetWorldEnv(gym.Env):
         obs_data[0, :, :] /= GridState.MAX_VALUE.value
 
         # Target and agent layer
-        target_nodes = []
-        for target in self.targets:
-            if self.current_visibility[target.node[1], target.node[0]]:
-                obs_data[1, target.node[1], target.node[0]] = (
+        for observed_node, target in zip(target_nodes, self.targets):
+            if observed_node is not None:
+                obs_data[1, observed_node[1], observed_node[0]] = (
                     GridState.TARGET.value + target.orientation
                 )
-                target_nodes.append(target.node)
-            else:
-                target_nodes.append(None)
 
         if obs_data[1, self.agent.node[1], self.agent.node[0]] != 0:
             obs_data[
@@ -344,7 +399,11 @@ class TargetWorldEnv(gym.Env):
         distances = {}
         for goal in self.goals:
             distances[goal] = self.graph.get_distance(self.agent.node, goal.node)
-        return {"distance": distances}
+        return {
+            "distance": distances,
+            "observation_available": self.current_observation_available,
+            "target_observation_model": self.current_target_observation_model,
+        }
 
     def reset(self, options=None):
         self.steps = 0
@@ -457,7 +516,7 @@ class TargetWorldEnv(gym.Env):
         self.reset_count += 1
         self.frame_count = 0
 
-        observation = self._get_obs()
+        observation = self._get_obs(observation_available=True)
         info = self._get_info()
 
         if self.render_mode == "file":
@@ -495,7 +554,9 @@ class TargetWorldEnv(gym.Env):
                 if np.array_equal(self.agent.node, target.node):
                     self.terminated = True
                     reward = self.hazard_cost
-                    observation = self._get_obs()
+                    observation = self._get_obs(
+                        observation_available=self._observation_available()
+                    )
                     info = self._get_info()
                     return observation, reward, self.terminated, False, info
 
@@ -512,7 +573,7 @@ class TargetWorldEnv(gym.Env):
                 * self.distance_grid[self.agent.node[1], self.agent.node[0]]
             )  # incentivise movement towards the goal
         # reward = 0  # Binary sparse rewards
-        observation = self._get_obs()
+        observation = self._get_obs(observation_available=self._observation_available())
         info = self._get_info()
 
         if self.render_mode == "human" or self.render_mode == "file":
