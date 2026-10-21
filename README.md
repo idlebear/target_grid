@@ -20,3 +20,13 @@ Finally, install the target grid environments.
 pip install ./target_grid
 ```
 
+
+## CPU and CUDA visibility
+
+Base installation requires no CUDA toolkit. Pass `visibility_fn` to
+`TargetWorldEnv` for CPU execution. The callable receives keyword arguments
+`data`, `starts`, `ends`, and `max_range` and returns a flat start-major array
+of visibility probabilities. It must preserve grid Bresenham/range semantics.
+Without the hook the original polycheck CUDA implementation is imported lazily
+when constructing the environment. Install CUDA dependencies with
+`pip install '.[cuda]'`; pin polycheck separately for reproducible experiments.

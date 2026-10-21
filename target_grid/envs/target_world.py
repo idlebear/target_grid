@@ -3,10 +3,6 @@ from gymnasium import spaces
 import numpy as np
 import os
 
-from polycheck import (
-    visibility_from_region,
-)
-
 from .constants import (
     GridState,
     DEFAULT_HAZARD_COST,
@@ -43,6 +39,7 @@ DEFAULT_WORLD_PARAMETERS = {
     "observation_interval": 1,
     "sensor_noise_fn": None,
     "sensor_noise_kwargs": {},
+    "allow_target_overlap": False,
     "screen_width": DEFAULT_SCREEN_WIDTH,
     "screen_height": DEFAULT_SCREEN_HEIGHT,
 }
@@ -57,8 +54,17 @@ class TargetWorldEnv(gym.Env):
         size=10,
         seed=None,
         world_parameters=None,
+        visibility_fn=None,
     ):
         super().__init__()
+        # A supplied implementation permits headless CPU use without PyCUDA.
+        # The default remains the existing polycheck CUDA implementation.
+        if visibility_fn is None:
+            from polycheck import visibility_from_region
+            visibility_fn = visibility_from_region
+        if not callable(visibility_fn):
+            raise TypeError("visibility_fn must be callable")
+        self.visibility_fn = visibility_fn
 
         # Start with a copy of default parameters
         params = DEFAULT_WORLD_PARAMETERS.copy()
@@ -86,6 +92,9 @@ class TargetWorldEnv(gym.Env):
         self.observation_interval = max(1, int(params.get("observation_interval", 1)))
         self.sensor_noise_fn = params.get("sensor_noise_fn", None)
         self.sensor_noise_kwargs = dict(params.get("sensor_noise_kwargs", {}))
+        # Ego-only overlap: targets still avoid each other and ground targets
+        # still respect obstacles. This does not enable flight.
+        self.allow_target_overlap = bool(params.get("allow_target_overlap", False))
 
         assert self.grid_data is None or (
             np.max(self.grid_data) <= 1 and np.min(self.grid_data) >= 0
@@ -188,7 +197,7 @@ class TargetWorldEnv(gym.Env):
             # + 0.5
         )
         # Bresenham's line algorithm (integer based)
-        visibility = visibility_from_region(
+        visibility = self.visibility_fn(
             data=visibility_grid, starts=start, ends=ends, max_range=self.view_range
         ).reshape(height, width)
         self.visibility_cache[cache_key] = visibility
@@ -300,6 +309,7 @@ class TargetWorldEnv(gym.Env):
         move_prob = target_properties.get("transition_matrix", None)
         occluding = target_properties.get("occluding", False)
         motion_type = target_properties.get("motion_type", "random")
+        flying = bool(target_properties.get("flying", False))
         if seed is None:
             seed = target_properties.get("seed", None)
 
@@ -323,6 +333,7 @@ class TargetWorldEnv(gym.Env):
                 occluding=occluding,
                 target_class=name,
                 motion_type=motion_type,
+                flying=flying,
             )
         else:
             target = Target(
@@ -333,6 +344,7 @@ class TargetWorldEnv(gym.Env):
                 occluding=occluding,
                 target_class=name,
                 motion_type=motion_type,
+                flying=flying,
             )
         return target
 
@@ -537,19 +549,25 @@ class TargetWorldEnv(gym.Env):
             return self._get_obs(), 0, True, True, self._get_info()
 
         # grab all the current agent and target positions
-        occupied_positions = [self.graph.linear_index(tuple(self.agent.node))]
-        for target in self.targets:
-            occupied_positions.append(self.graph.linear_index(tuple(target.node)))
+        reserved_agent_index = self.graph.linear_index(tuple(self.agent.node))
 
         # Map the action (element of {0,1,2,3}) to the direction we walk in
         self.agent.step(self.graph, action)
 
-        # step all of the targets
+        # Step targets sequentially against the other targets' current positions.
+        # The observer position is reserved only under the legacy collision policy.
         for target in self.targets:
+            occupied_positions = [
+                self.graph.linear_index(tuple(other.node))
+                for other in self.targets
+                if other is not target
+            ]
+            if not self.allow_target_overlap:
+                occupied_positions.append(reserved_agent_index)
             target.step(self.graph, occupied_positions)
 
         # if there is a collision, the episode is over
-        if self.hazard_cost:
+        if self.hazard_cost and not self.allow_target_overlap:
             for target in self.targets:
                 if np.array_equal(self.agent.node, target.node):
                     self.terminated = True

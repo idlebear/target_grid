@@ -152,6 +152,7 @@ class Target(Object):
         self.occluding = kwargs.get("occluding", False)
         self.target_class = kwargs.get("target_class", None)
         self.motion_type = kwargs.get("motion_type", "random")
+        self.flying = bool(kwargs.get("flying", False))
 
     def reset(self, seed=None):
         self.node = self.initial_node
@@ -170,15 +171,24 @@ class Target(Object):
         new_target.occluding = self.occluding
         new_target.target_class = self.target_class
         new_target.motion_type = self.motion_type
+        new_target.flying = self.flying
+        new_target.seed = self.seed
+        new_target.initial_node = self.initial_node
+        new_target.initial_orientation = self.initial_orientation
         return new_target
 
     def step(self, graph: GridGraph, occupied_positions: list = None):
         if self.node is None:
             return
+        occupied_positions = set(occupied_positions or ())
 
         if self.move_prob is not None:
             node_index = graph.linear_index(self.node)
             move_prob = self.move_prob[node_index].copy()
+            if not self.flying:
+                for candidate_index in np.flatnonzero(move_prob):
+                    if graph.grid_index(int(candidate_index)) not in graph.G:
+                        move_prob[candidate_index] = 0.0
             # zero out the probabilities of occupied positions
             if occupied_positions is not None:
                 for pos in occupied_positions:
@@ -188,7 +198,8 @@ class Target(Object):
                 if total_prob > 0:
                     move_prob /= total_prob
                 else:
-                    move_prob = self.move_prob[node_index]
+                    move_prob = np.zeros_like(move_prob)
+                    move_prob[node_index] = 1.0
             next_node_index = self.rng.choice(len(move_prob), p=move_prob)
             self.node = graph.grid_index(next_node_index)
             # ignore orientation for now -- we are allowing jumps to non-neighbour nodes
@@ -197,6 +208,15 @@ class Target(Object):
             while True:
                 action = self.rng.integers(0, self.action_space_size)
                 next_node = action_to_node(node=self.node, action=action)
+                in_bounds = (
+                    0 <= next_node[0] < graph.grid_data.shape[1]
+                    and 0 <= next_node[1] < graph.grid_data.shape[0]
+                )
+                if self.flying and not in_bounds:
+                    attempts += 1
+                    if attempts >= 10:
+                        return
+                    continue
                 if graph.linear_index(next_node) not in occupied_positions:
                     break
                 attempts += 1
@@ -204,7 +224,11 @@ class Target(Object):
                     # give up and stay in place
                     return
             self.orientation = action
-            self.node = graph.validate_node(self.node, next_node)
+            self.node = (
+                next_node
+                if self.flying
+                else graph.validate_node(self.node, next_node)
+            )
 
     def draw(self, window: Window, visibility: float = 1.0):
         color = list(self.color)
